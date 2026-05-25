@@ -44,6 +44,14 @@ class OfflineRoutingData {
     GraphNode(id: 'valencia_plaza', name: 'Valencia Plaza', position: LatLng(9.2810, 123.2450)),
     GraphNode(id: 'real_silliman', name: 'Real St & Silliman Ave Junction', position: LatLng(9.3081, 123.3060)),
     GraphNode(id: 'boulevard', name: 'Rizal Boulevard Beachfront', position: LatLng(9.3075, 123.3115)),
+    
+    // Small Streets / Secondary Junctions
+    GraphNode(id: 'perdices_silliman', name: 'Perdices St & Silliman Ave', position: LatLng(9.3098, 123.3093)),
+    GraphNode(id: 'perdices_colon', name: 'Perdices St & Colon St', position: LatLng(9.3060, 123.3097)),
+    GraphNode(id: 'locsin_silliman', name: 'Locsin St & Silliman Ave', position: LatLng(9.3090, 123.3076)),
+    GraphNode(id: 'locsin_colon', name: 'Locsin St & Colon St', position: LatLng(9.3053, 123.3080)),
+    GraphNode(id: 'cervantes_real', name: 'Real St & Cervantes St', position: LatLng(9.3035, 123.3055)),
+    GraphNode(id: 'cervantes_locsin', name: 'Locsin St & Cervantes St', position: LatLng(9.3030, 123.3068)),
   ];
 
   static final List<GraphEdge> edges = [
@@ -64,15 +72,26 @@ class OfflineRoutingData {
       ],
     ),
     GraphEdge(
-      id: 'robinsons_belfry',
+      id: 'robinsons_cervantes',
       sourceId: 'robinsons',
-      targetId: 'belfry',
+      targetId: 'cervantes_real',
       streetName: 'Real Street',
-      distance: 1400.0,
+      distance: 950.0,
       polyline: [
         LatLng(9.2963, 123.3006),
         LatLng(9.2980, 123.3015),
         LatLng(9.3010, 123.3035),
+        LatLng(9.3035, 123.3055),
+      ],
+    ),
+    GraphEdge(
+      id: 'cervantes_belfry',
+      sourceId: 'cervantes_real',
+      targetId: 'belfry',
+      streetName: 'Real Street',
+      distance: 450.0,
+      polyline: [
+        LatLng(9.3035, 123.3055),
         LatLng(9.3040, 123.3060),
         LatLng(9.3063, 123.3082),
       ],
@@ -157,14 +176,35 @@ class OfflineRoutingData {
       ],
     ),
     GraphEdge(
-      id: 'real_silliman_boulevard',
+      id: 'real_silliman_locsin',
       sourceId: 'real_silliman',
-      targetId: 'boulevard',
+      targetId: 'locsin_silliman',
       streetName: 'Silliman Avenue',
-      distance: 600.0,
+      distance: 180.0,
       polyline: [
         LatLng(9.3081, 123.3060),
-        LatLng(9.3080, 123.3090),
+        LatLng(9.3090, 123.3076),
+      ],
+    ),
+    GraphEdge(
+      id: 'locsin_perdices_silliman',
+      sourceId: 'locsin_silliman',
+      targetId: 'perdices_silliman',
+      streetName: 'Silliman Avenue',
+      distance: 200.0,
+      polyline: [
+        LatLng(9.3090, 123.3076),
+        LatLng(9.3098, 123.3093),
+      ],
+    ),
+    GraphEdge(
+      id: 'perdices_silliman_boulevard',
+      sourceId: 'perdices_silliman',
+      targetId: 'boulevard',
+      streetName: 'Silliman Avenue',
+      distance: 250.0,
+      polyline: [
+        LatLng(9.3098, 123.3093),
         LatLng(9.3075, 123.3115),
       ],
     ),
@@ -191,6 +231,85 @@ class OfflineRoutingData {
         LatLng(9.3075, 123.3115),
         LatLng(9.3070, 123.3095),
         LatLng(9.3063, 123.3082),
+      ],
+    ),
+    
+    // Small Street Segments (Locsin, Perdices, Colon, Cervantes)
+    GraphEdge(
+      id: 'belfry_locsin_colon',
+      sourceId: 'belfry',
+      targetId: 'locsin_colon',
+      streetName: 'Colon Street',
+      distance: 150.0,
+      polyline: [
+        LatLng(9.3063, 123.3082),
+        LatLng(9.3053, 123.3080),
+      ],
+    ),
+    GraphEdge(
+      id: 'locsin_perdices_colon',
+      sourceId: 'locsin_colon',
+      targetId: 'perdices_colon',
+      streetName: 'Colon Street',
+      distance: 200.0,
+      polyline: [
+        LatLng(9.3053, 123.3080),
+        LatLng(9.3060, 123.3097),
+      ],
+    ),
+    GraphEdge(
+      id: 'perdices_colon_boulevard',
+      sourceId: 'perdices_colon',
+      targetId: 'boulevard',
+      streetName: 'Colon Street',
+      distance: 220.0,
+      polyline: [
+        LatLng(9.3060, 123.3097),
+        LatLng(9.3075, 123.3115),
+      ],
+    ),
+    GraphEdge(
+      id: 'locsin_silliman_colon',
+      sourceId: 'locsin_silliman',
+      targetId: 'locsin_colon',
+      streetName: 'Locsin Street',
+      distance: 410.0,
+      polyline: [
+        LatLng(9.3090, 123.3076),
+        LatLng(9.3053, 123.3080),
+      ],
+    ),
+    GraphEdge(
+      id: 'perdices_silliman_colon',
+      sourceId: 'perdices_silliman',
+      targetId: 'perdices_colon',
+      streetName: 'Perdices Street',
+      distance: 420.0,
+      polyline: [
+        LatLng(9.3098, 123.3093),
+        LatLng(9.3060, 123.3097),
+      ],
+    ),
+    GraphEdge(
+      id: 'cervantes_real_locsin',
+      sourceId: 'cervantes_real',
+      targetId: 'cervantes_locsin',
+      streetName: 'Cervantes Street',
+      distance: 160.0,
+      polyline: [
+        LatLng(9.3035, 123.3055),
+        LatLng(9.3030, 123.3068),
+      ],
+    ),
+    GraphEdge(
+      id: 'cervantes_locsin_colon',
+      sourceId: 'cervantes_locsin',
+      targetId: 'locsin_colon',
+      streetName: 'Locsin Street',
+      distance: 280.0,
+      polyline: [
+        LatLng(9.3030, 123.3068),
+        LatLng(9.3053, 123.3080),
       ],
     ),
   ];
