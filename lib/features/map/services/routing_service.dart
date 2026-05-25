@@ -86,7 +86,7 @@ class RoutingService {
       try {
         final url = 'https://router.project-osrm.org/route/v1/driving/'
             '${start.longitude},${start.latitude};${end.longitude},${end.latitude}'
-            '?overview=full&geometries=geojson&steps=true&alternatives=true';
+            '?overview=full&geometries=geojson&steps=true&alternatives=3';
         
         debugPrint('RoutingService: Fetching routes from OSRM: $url');
         final response = await _dio.get(url);
@@ -144,8 +144,9 @@ class RoutingService {
               ));
             }
 
-            // Save all routes to cache
+            // Sort the routes by distance ascending so the shortest possible street route is always the primary route
             if (routes.isNotEmpty) {
+              routes.sort((a, b) => a.distance.compareTo(b.distance));
               _saveToCache(start, end, routes);
             }
 

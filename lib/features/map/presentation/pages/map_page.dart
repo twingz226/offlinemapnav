@@ -15,6 +15,7 @@ import '../providers/search_provider.dart';
 import '../providers/navigation_provider.dart';
 import '../../data/models/favorite_place_model.dart';
 import '../../services/routing_service.dart';
+import '../../services/distance_service.dart';
 
 class MapPage extends ConsumerStatefulWidget {
   const MapPage({super.key});
@@ -380,11 +381,55 @@ class _MapPageState extends ConsumerState<MapPage> {
     return "via ${streets.take(2).join(' & ')}";
   }
 
+  bool _isPointNearPolyline(LatLng point, List<LatLng> polyline, double thresholdMeters) {
+    for (int i = 0; i < polyline.length - 1; i++) {
+      final p1 = polyline[i];
+      final p2 = polyline[i + 1];
+      
+      final double distance = _distanceToSegment(point, p1, p2);
+      if (distance <= thresholdMeters) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  double _distanceToSegment(LatLng p, LatLng a, LatLng b) {
+    final double x = p.longitude;
+    final double y = p.latitude;
+    final double x1 = a.longitude;
+    final double y1 = a.latitude;
+    final double x2 = b.longitude;
+    final double y2 = b.latitude;
+
+    final double dx = x2 - x1;
+    final double dy = y2 - y1;
+
+    if (dx == 0 && dy == 0) {
+      return DistanceService.calculateDistance(p, a) * 1000;
+    }
+
+    final double t = ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy);
+
+    if (t < 0) {
+      return DistanceService.calculateDistance(p, a) * 1000;
+    } else if (t > 1) {
+      return DistanceService.calculateDistance(p, b) * 1000;
+    }
+
+    final LatLng projection = LatLng(
+      y1 + t * dy,
+      x1 + t * dx,
+    );
+
+    return DistanceService.calculateDistance(p, projection) * 1000;
+  }
+
   Widget _buildRouteOptionCard(
     BuildContext context, {
     required RouteInfo route,
     required bool isActive,
-    required String label,
+    required List<String> badges,
     required VoidCallback onTap,
   }) {
     final theme = Theme.of(context);
@@ -415,18 +460,31 @@ class _MapPageState extends ConsumerState<MapPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: isActive ? Colors.blueAccent : Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    label,
-                    style: TextStyle(
-                      color: isActive ? Colors.white : Colors.grey.shade700,
-                      fontSize: 9,
-                      fontWeight: FontWeight.bold,
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: badges.map((badge) {
+                        final isPrimaryBadge = badge.contains("Best") || badge.contains("Fastest") || badge.contains("Shortest");
+                        return Container(
+                          margin: const EdgeInsets.only(right: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: isPrimaryBadge 
+                                ? (isActive ? Colors.blueAccent : Colors.green.shade600)
+                                : Colors.grey.shade200,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            badge,
+                            style: TextStyle(
+                              color: isPrimaryBadge ? Colors.white : Colors.grey.shade700,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        );
+                      }).toList(),
                     ),
                   ),
                 ),
@@ -562,6 +620,25 @@ class _MapPageState extends ConsumerState<MapPage> {
               });
             },
             onTap: (tapPosition, latlng) {
+              if (navState.activeRoute != null && !navState.isNavigating) {
+                // Check if tap is near any alternative route
+                for (final route in navState.alternativeRoutes) {
+                  if (_isPointNearPolyline(latlng, route.polyline, 80.0)) {
+                    ref.read(navigationProvider.notifier).selectAlternativeRoute(route);
+                    ScaffoldMessenger.of(context).clearSnackBars();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Switched route ${_getRouteViaString(route)}'),
+                        duration: const Duration(seconds: 2),
+                        backgroundColor: Colors.blueAccent,
+                      ),
+                    );
+                    return;
+                  }
+                }
+                return; // Suppress place pinning while selecting routes
+              }
+
               final pinned = FavoritePlaceModel(
                 name: 'Pinned Location',
                 latitude: latlng.latitude,
@@ -1098,34 +1175,66 @@ class _MapPageState extends ConsumerState<MapPage> {
                       // Horizontal list of route options
                       SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: [
-                            // 1. Active Route Option
-                            _buildRouteOptionCard(
-                              context,
-                              route: navState.activeRoute!,
-                              isActive: true,
-                              label: "Recommended",
-                              onTap: () {}, // Already selected
-                            ),
+                        child: () {
+                          final allRoutes = [
+                            if (navState.activeRoute != null) navState.activeRoute!,
+                            ...navState.alternativeRoutes
+                          ];
+                          double minDistance = double.infinity;
+                          double minDuration = double.infinity;
+                          for (final r in allRoutes) {
+                            if (r.distance < minDistance) minDistance = r.distance;
+                            if (r.duration < minDuration) minDuration = r.duration;
+                          }
+
+                          List<String> getRouteBadges(RouteInfo route) {
+                            final List<String> b = [];
+                            final bool isShortest = (route.distance - minDistance).abs() < 15.0; // within 15 meters
+                            final bool isFastest = (route.duration - minDuration).abs() < 5.0;   // within 5 seconds
                             
-                            // 2. Alternative Route Options
-                            ...navState.alternativeRoutes.map((route) {
-                              return Padding(
-                                padding: const EdgeInsets.only(left: 10),
-                                child: _buildRouteOptionCard(
+                            if (isShortest && isFastest) {
+                              b.add("Best Route");
+                            } else {
+                              if (isFastest) b.add("Fastest");
+                              if (isShortest) b.add("Shortest");
+                            }
+                            
+                            if (b.isEmpty) {
+                              b.add("Alternative");
+                            }
+                            return b;
+                          }
+
+                          return Row(
+                            children: [
+                              // 1. Active Route Option
+                              if (navState.activeRoute != null)
+                                _buildRouteOptionCard(
                                   context,
-                                  route: route,
-                                  isActive: false,
-                                  label: "Alternative",
-                                  onTap: () {
-                                    ref.read(navigationProvider.notifier).selectAlternativeRoute(route);
-                                  },
+                                  route: navState.activeRoute!,
+                                  isActive: true,
+                                  badges: getRouteBadges(navState.activeRoute!),
+                                  onTap: () {}, // Already selected
                                 ),
-                              );
-                            }),
-                          ],
-                        ),
+                              
+                              // 2. Alternative Route Options
+                              ...navState.alternativeRoutes.map((route) {
+                                return Padding(
+                                  padding: const EdgeInsets.only(left: 10),
+                                  child: _buildRouteOptionCard(
+                                    context,
+                                    route: route,
+                                    isActive: false,
+                                    badges: getRouteBadges(route),
+                                    onTap: () {
+                                      ref.read(navigationProvider.notifier).selectAlternativeRoute(route);
+                                    },
+                                  ),
+                                );
+                              }),
+                            ],
+                          );
+                        }(),
                       ),
                       
                       const SizedBox(height: 16),
