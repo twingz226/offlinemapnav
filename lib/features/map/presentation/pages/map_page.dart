@@ -385,6 +385,7 @@ class _MapPageState extends ConsumerState<MapPage> {
             mapController: _mapController,
             routePolyline: navState.activeRoute?.polyline,
             alternativePolylines: navState.alternativeRoutes.map((r) => r.polyline).toList(),
+            isNavigating: navState.isNavigating,
             onViewportChanged: (center, bounds, zoom) {
               ref.read(autoDownloadProvider.notifier).onMapPositionChanged(bounds, zoom);
               WidgetsBinding.instance.addPostFrameCallback((_) {

@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import '../../../../core/constants/tile_config.dart';
 import '../../data/models/favorite_place_model.dart';
+import 'user_location_indicator.dart';
 
 class MapView extends StatefulWidget {
   final List<FavoritePlaceModel> favorites;
@@ -19,6 +20,7 @@ class MapView extends StatefulWidget {
   final List<LatLng>? routePolyline;
   final List<List<LatLng>>? alternativePolylines;
   final void Function(LatLng center, LatLngBounds bounds, double zoom)? onViewportChanged;
+  final bool isNavigating;
 
   const MapView({
     super.key,
@@ -33,6 +35,7 @@ class MapView extends StatefulWidget {
     this.routePolyline,
     this.alternativePolylines,
     this.onViewportChanged,
+    this.isNavigating = false,
   });
 
   @override
@@ -330,46 +333,12 @@ class _MapViewState extends State<MapView> with SingleTickerProviderStateMixin {
                   widget.userPosition!.latitude,
                   widget.userPosition!.longitude,
                 ),
-                width: 50,
-                height: 50,
-                child: AnimatedBuilder(
-                  animation: _pulseController,
-                  builder: (context, child) {
-                    return Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        // Animated pulsing outer ring
-                        Container(
-                          width: 14 + (36 * _pulseController.value),
-                          height: 14 + (36 * _pulseController.value),
-                          decoration: BoxDecoration(
-                            color: Colors.blue.withValues(alpha: 0.45 * (1.0 - _pulseController.value)),
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Colors.blue.withValues(alpha: 0.6 * (1.0 - _pulseController.value)),
-                              width: 1.5,
-                            ),
-                          ),
-                        ),
-                        // Static inner dot with glow/shadow
-                        Container(
-                          width: 14,
-                          height: 14,
-                          decoration: const BoxDecoration(
-                            color: Colors.blue,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black26,
-                                blurRadius: 4,
-                                offset: Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    );
-                  },
+                width: 160,
+                height: 160,
+                rotate: true, // Counter-rotates marker to keep it oriented with map North
+                child: UserLocationIndicator(
+                  userPosition: widget.userPosition,
+                  isNavigating: widget.isNavigating,
                 ),
               ),
             ],
