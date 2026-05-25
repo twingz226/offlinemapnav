@@ -502,24 +502,41 @@ class OfflineRoutingData {
     String endId, {
     Set<String> blockedEdgeIds = const {},
   }) {
-    final Map<String, double> distances = {};
-    final Map<String, GraphEdge?> previousEdges = {};
-    final Set<String> unvisited = {};
+    final Map<String, LatLng> nodePositions = {
+      for (final n in nodes) n.id: n.position
+    };
 
-    for (final node in nodes) {
-      distances[node.id] = double.infinity;
-      previousEdges[node.id] = null;
-      unvisited.add(node.id);
+    double heuristic(String id) {
+      final pos = nodePositions[id];
+      final endPos = nodePositions[endId];
+      if (pos == null || endPos == null) return 0.0;
+      return DistanceService.calculateDistance(pos, endPos) * 1000.0; // meters
     }
-    distances[startId] = 0.0;
 
-    while (unvisited.isNotEmpty) {
+    // gScore[node] is the cost of the cheapest path from start to node currently known.
+    final Map<String, double> gScore = {
+      for (final n in nodes) n.id: double.infinity
+    };
+    gScore[startId] = 0.0;
+
+    // fScore[node] = gScore[node] + heuristic(node)
+    final Map<String, double> fScore = {
+      for (final n in nodes) n.id: double.infinity
+    };
+    fScore[startId] = heuristic(startId);
+
+    // openSet contains nodes to be evaluated.
+    final Set<String> openSet = {startId};
+
+    final Map<String, GraphEdge?> previousEdges = {};
+
+    while (openSet.isNotEmpty) {
+      // Find the node in openSet having the lowest fScore value.
       String? currentId;
-      double minDist = double.infinity;
-
-      for (final id in unvisited) {
-        if (distances[id]! < minDist) {
-          minDist = distances[id]!;
+      double minF = double.infinity;
+      for (final id in openSet) {
+        if (fScore[id]! < minF) {
+          minF = fScore[id]!;
           currentId = id;
         }
       }
@@ -528,25 +545,28 @@ class OfflineRoutingData {
         break;
       }
 
-      unvisited.remove(currentId);
+      openSet.remove(currentId);
 
-      // Bidirectional neighbor search with edge blocking support
+      // Find neighbors that are not blocked
       final neighbors = edges.where((e) =>
           (e.sourceId == currentId || e.targetId == currentId) &&
           !blockedEdgeIds.contains(e.id));
+
       for (final edge in neighbors) {
         final neighborId = edge.sourceId == currentId ? edge.targetId : edge.sourceId;
-        if (!unvisited.contains(neighborId)) continue;
+        final tentativeGScore = gScore[currentId]! + edge.distance;
 
-        final newDist = distances[currentId]! + edge.distance;
-        if (newDist < distances[neighborId]!) {
-          distances[neighborId] = newDist;
+        if (tentativeGScore < gScore[neighborId]!) {
+          // This path to neighbor is better than any previous one. Record it!
           previousEdges[neighborId] = edge;
+          gScore[neighborId] = tentativeGScore;
+          fScore[neighborId] = tentativeGScore + heuristic(neighborId);
+          openSet.add(neighborId);
         }
       }
     }
 
-    if (distances[endId] == double.infinity) {
+    if (gScore[endId] == double.infinity) {
       return [];
     }
 

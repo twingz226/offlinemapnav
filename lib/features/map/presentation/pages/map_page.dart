@@ -535,15 +535,13 @@ class _MapPageState extends ConsumerState<MapPage> {
     final searchResultsAsync = ref.watch(searchResultsProvider);
     final navState = ref.watch(navigationProvider);
 
-    // Auto center on user location when it first loads successfully or when navigating
+    // Auto center on user location when it first loads successfully
     ref.listen<AsyncValue<Position?>>(locationProvider, (previous, next) {
       next.whenOrNull(
         data: (pos) {
           if (pos != null) {
             final activeNav = ref.read(navigationProvider);
-            if (activeNav.isNavigating) {
-              _mapController.move(LatLng(pos.latitude, pos.longitude), 16.5);
-            } else if (previous == null || previous.value == null) {
+            if (!activeNav.isNavigating && (previous == null || previous.value == null)) {
               _mapController.move(LatLng(pos.latitude, pos.longitude), 15.0);
             }
           }
@@ -552,6 +550,13 @@ class _MapPageState extends ConsumerState<MapPage> {
     });
 
     ref.listen(navigationProvider, (previous, next) {
+      // Auto center camera on the snapped coordinates during active navigation
+      if (next.isNavigating && next.snappedPosition != null &&
+          (previous == null || previous.snappedPosition != next.snappedPosition)) {
+        final pos = next.snappedPosition!;
+        _mapController.move(LatLng(pos.latitude, pos.longitude), 16.5);
+      }
+
       if (next.activeRoute != null && (previous == null || previous.activeRoute != next.activeRoute)) {
         final polyline = next.activeRoute!.polyline;
         if (polyline.isNotEmpty) {
@@ -604,7 +609,9 @@ class _MapPageState extends ConsumerState<MapPage> {
               });
               _mapController.move(LatLng(place.latitude, place.longitude), 15.5);
             },
-            userPosition: location.value,
+            userPosition: navState.isNavigating && navState.snappedPosition != null
+                ? navState.snappedPosition
+                : location.value,
             mapController: _mapController,
             routePolyline: navState.activeRoute?.polyline,
             alternativePolylines: navState.alternativeRoutes.map((r) => r.polyline).toList(),

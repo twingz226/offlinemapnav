@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:offline_map/core/utils/navigation_utils.dart';
 import '../../services/routing_service.dart';
 import '../../services/voice_navigation_service.dart';
 import '../../services/distance_service.dart';
@@ -16,6 +18,7 @@ class NavigationState {
   final double remainingDistance; // in meters
   final double remainingDuration; // in seconds
   final bool isRerouting;
+  final Position? snappedPosition;
 
   NavigationState({
     this.activeRoute,
@@ -27,6 +30,7 @@ class NavigationState {
     this.remainingDistance = 0,
     this.remainingDuration = 0,
     this.isRerouting = false,
+    this.snappedPosition,
   });
 
   NavigationState copyWith({
@@ -39,6 +43,7 @@ class NavigationState {
     double? remainingDistance,
     double? remainingDuration,
     bool? isRerouting,
+    Position? Function()? snappedPosition,
   }) {
     return NavigationState(
       activeRoute: activeRoute != null ? activeRoute() : this.activeRoute,
@@ -50,6 +55,7 @@ class NavigationState {
       remainingDistance: remainingDistance ?? this.remainingDistance,
       remainingDuration: remainingDuration ?? this.remainingDuration,
       isRerouting: isRerouting ?? this.isRerouting,
+      snappedPosition: snappedPosition != null ? snappedPosition() : this.snappedPosition,
     );
   }
 
@@ -78,11 +84,13 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
     ref.listen(locationProvider, (previous, next) {
       next.whenData((position) {
         if (position != null && state.isNavigating) {
-          _onLocationUpdated(LatLng(position.latitude, position.longitude));
+          _onLocationUpdated(position);
         }
       });
     });
   }
+
+  final _kalmanFilter = KalmanFilter2D();
 
   final Ref ref;
   final _routingService = RoutingService();
@@ -96,11 +104,13 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
     required LatLng end,
     required String destinationName,
   }) async {
+    _kalmanFilter.reset();
     state = state.copyWith(
       isNavigating: true,
       destination: () => end,
       destinationName: () => destinationName,
       isRerouting: true,
+      snappedPosition: () => null,
     );
 
     // Direct check to avoid Riverpod StreamProvider initial loading lag
@@ -229,27 +239,64 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
     state = NavigationState();
     _lastSpokenStepIndex = -1;
     _lastSpokenDistance = double.infinity;
+    _kalmanFilter.reset();
     _voiceService.speak("Navigation stopped");
   }
 
-  Future<void> _onLocationUpdated(LatLng userPos) async {
+  Future<void> _onLocationUpdated(Position rawPosition) async {
     final route = state.activeRoute;
     if (route == null || state.isRerouting) return;
 
+    final rawLatLng = LatLng(rawPosition.latitude, rawPosition.longitude);
+    final filteredLatLng = _kalmanFilter.filter(rawLatLng);
+
     // 1. Reroute Detection (User moves > 65 meters away from closest point on route)
-    final distToRoute = _distanceToPolyline(userPos, route.polyline);
+    final distToRoute = _distanceToPolyline(filteredLatLng, route.polyline);
     if (distToRoute > 65.0) {
-      _triggerReroute(userPos);
+      _triggerReroute(rawLatLng);
       return;
     }
 
-    // 2. Advance Steps Check
+    // 2. Snap to Route
+    final (snappedLatLng, segmentIndex) = NavigationUtils.snapToRoute(
+      point: filteredLatLng,
+      polyline: route.polyline,
+      maxSnapDistanceMeters: 30.0,
+    );
+
+    // Calculate heading from snapped segment bearing if available
+    double heading = rawPosition.heading;
+    if (segmentIndex != -1 && segmentIndex < route.polyline.length - 1) {
+      heading = NavigationUtils.calculateBearing(
+        route.polyline[segmentIndex],
+        route.polyline[segmentIndex + 1],
+      );
+    }
+
+    // Construct snapped position object
+    final snappedPos = Position(
+      latitude: snappedLatLng.latitude,
+      longitude: snappedLatLng.longitude,
+      timestamp: rawPosition.timestamp,
+      accuracy: rawPosition.accuracy,
+      altitude: rawPosition.altitude,
+      altitudeAccuracy: rawPosition.altitudeAccuracy,
+      heading: heading,
+      headingAccuracy: rawPosition.headingAccuracy,
+      speed: rawPosition.speed,
+      speedAccuracy: rawPosition.speedAccuracy,
+      isMocked: rawPosition.isMocked,
+    );
+
+    state = state.copyWith(snappedPosition: () => snappedPos);
+
+    // 3. Advance Steps Check
     final steps = route.steps;
     int currentIndex = state.currentStepIndex;
     
     if (currentIndex < steps.length) {
       final nextStepLoc = steps[currentIndex].location;
-      final distToNextTurn = DistanceService.calculateDistance(userPos, nextStepLoc) * 1000;
+      final distToNextTurn = DistanceService.calculateDistance(snappedLatLng, nextStepLoc) * 1000;
 
       if (distToNextTurn < 25.0 && currentIndex + 1 < steps.length) {
         currentIndex++;
@@ -267,13 +314,13 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
       }
     }
 
-    // 3. Estimate Remaining Distance & Duration along remaining route polyline
+    // 4. Estimate Remaining Distance & Duration along remaining route polyline
     double remainingDist = 0.0;
     int closestNodeIndex = 0;
     double minNodeDist = double.infinity;
 
     for (int i = 0; i < route.polyline.length; i++) {
-      final d = DistanceService.calculateDistance(userPos, route.polyline[i]) * 1000;
+      final d = DistanceService.calculateDistance(snappedLatLng, route.polyline[i]) * 1000;
       if (d < minNodeDist) {
         minNodeDist = d;
         closestNodeIndex = i;
@@ -293,9 +340,9 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
       remainingDuration: remainingDur,
     );
 
-    // 4. Arrived Destination Check
+    // 5. Arrived Destination Check
     if (state.destination != null) {
-      final distToDest = DistanceService.calculateDistance(userPos, state.destination!) * 1000;
+      final distToDest = DistanceService.calculateDistance(snappedLatLng, state.destination!) * 1000;
       if (distToDest < 20.0) {
         _voiceService.speak("You have arrived at your destination");
         stopNavigation();
