@@ -50,6 +50,7 @@ class MapView extends StatefulWidget {
 
 class _MapViewState extends State<MapView> with SingleTickerProviderStateMixin {
   LatLngBounds? _visibleBounds;
+  double _mapRotation = 0.0;
 
   // Construct the tile provider ONCE outside of build() to avoid
   // performance issues and internal image cache disruption.
@@ -261,6 +262,7 @@ class _MapViewState extends State<MapView> with SingleTickerProviderStateMixin {
         onPositionChanged: (position, hasGesture) {
           setState(() {
             _visibleBounds = position.visibleBounds;
+            _mapRotation = position.rotation;
           });
           if (widget.onViewportChanged != null) {
             widget.onViewportChanged!(position.center, position.visibleBounds, position.zoom);
@@ -345,6 +347,7 @@ class _MapViewState extends State<MapView> with SingleTickerProviderStateMixin {
                 child: UserLocationIndicator(
                   userPosition: widget.userPosition,
                   isNavigating: widget.isNavigating,
+                  mapRotation: _mapRotation,
                 ),
               ),
             ],

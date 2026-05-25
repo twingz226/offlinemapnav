@@ -7,11 +7,13 @@ import 'package:flutter_compass/flutter_compass.dart';
 class UserLocationIndicator extends StatefulWidget {
   final Position? userPosition;
   final bool isNavigating;
+  final double mapRotation;
 
   const UserLocationIndicator({
     super.key,
     required this.userPosition,
     this.isNavigating = false,
+    this.mapRotation = 0.0,
   });
 
   @override
@@ -87,7 +89,7 @@ class _UserLocationIndicatorState extends State<UserLocationIndicator>
     final bool showChevron = widget.isNavigating ||
         (widget.userPosition != null && widget.userPosition!.speed > 0.8);
 
-    final double radians = _targetHeading * math.pi / 180;
+    final double radians = (_targetHeading + widget.mapRotation) * math.pi / 180;
 
     return Center(
       child: SizedBox(
