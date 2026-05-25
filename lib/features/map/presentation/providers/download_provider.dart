@@ -4,6 +4,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../services/tile_download_service.dart';
+import '../../services/osm_graph_service.dart';
 
 /// Represents a downloadable map region.
 class DownloadableRegion {
@@ -96,6 +97,7 @@ class DownloadNotifier extends StateNotifier<DownloadState> {
   }
 
   final _service = TileDownloadService();
+  final _graphService = OSMGraphService();
 
   Future<void> _checkExistingTiles() async {
     final count = await _service.getTileCount();
@@ -129,6 +131,10 @@ class DownloadNotifier extends StateNotifier<DownloadState> {
         },
       );
 
+      // Trigger OSM graph compilation after tile download finishes
+      debugPrint('DownloadNotifier: Tile download complete. Starting OSM graph compilation...');
+      await _graphService.compileGraphForRegion(region);
+
       // Download finished — fetch real stats
       final count = await _service.getTileCount();
       final size = await _service.getCacheSizeKiB();
@@ -158,6 +164,10 @@ class DownloadNotifier extends StateNotifier<DownloadState> {
   Future<void> deleteDownload() async {
     final success = await _service.deleteAllTiles();
     if (success) {
+      // Remove compiled graphs for all regions
+      for (final region in availableRegions) {
+        await _graphService.deleteGraphForRegion(region.id);
+      }
       state = const DownloadState(
         status: DownloadStatus.idle,
         progress: 0.0,
@@ -166,6 +176,7 @@ class DownloadNotifier extends StateNotifier<DownloadState> {
       );
     }
   }
+
 
   Future<void> refreshStats() async {
     final count = await _service.getTileCount();

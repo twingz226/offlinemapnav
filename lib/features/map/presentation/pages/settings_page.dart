@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/theme_provider.dart';
 import '../providers/cache_provider.dart';
+import 'trip_history_page.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -83,8 +84,8 @@ class SettingsPage extends ConsumerWidget {
                           Navigator.pop(context);
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                              content: Text('Clearing offline map cache...'),
-                              duration: Duration(seconds: 1),
+                                content: Text('Clearing offline map cache...'),
+                                duration: Duration(seconds: 1),
                             ),
                           );
                           await ref.read(cacheProvider.notifier).clearCache();
@@ -105,9 +106,24 @@ class SettingsPage extends ConsumerWidget {
             },
           ),
           ListTile(
+            leading: const Icon(Icons.route_outlined),
+            title: const Text('Recorded Trips'),
+            subtitle: const Text('View and manage your saved GPX tracks'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const TripHistoryPage(),
+                ),
+              );
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('About'),
             trailing: const Icon(Icons.chevron_right),
+
             onTap: () {
               showAboutDialog(
                 context: context,

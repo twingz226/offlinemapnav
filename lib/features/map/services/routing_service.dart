@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 import 'distance_service.dart';
 import 'offline_routing_data.dart';
+import 'osm_graph_service.dart';
+import '../presentation/providers/download_provider.dart';
 
 class RouteStep {
   final String instruction;
@@ -43,12 +45,14 @@ class RouteInfo {
   final double distance; // in meters
   final double duration; // in seconds
   final List<RouteStep> steps;
+  final List<double>? speedLimits; // speed limits in km/h
 
   RouteInfo({
     required this.polyline,
     required this.distance,
     required this.duration,
     required this.steps,
+    this.speedLimits,
   });
 
   Map<String, dynamic> toJson() {
@@ -57,6 +61,7 @@ class RouteInfo {
       'distance': distance,
       'duration': duration,
       'steps': steps.map((s) => s.toJson()).toList(),
+      'speedLimits': speedLimits,
     };
   }
 
@@ -70,8 +75,12 @@ class RouteInfo {
       steps: (json['steps'] as List)
           .map((s) => RouteStep.fromJson(s as Map))
           .toList(),
+      speedLimits: (json['speedLimits'] as List?)
+          ?.map((s) => (s as num).toDouble())
+          .toList(),
     );
   }
+
 }
 
 class RoutingService {
@@ -170,13 +179,42 @@ class RoutingService {
       return cachedRoutes;
     }
 
-    // 2. Check local Dumaguete road network graph Dijkstra routing
+    // 2. Check compiled dynamic OSM graphs
+    for (final region in availableRegions) {
+      if (region.bounds.contains(start) && region.bounds.contains(end)) {
+        try {
+          final box = await Hive.openBox('osm_graphs');
+          final nodesKey = '${region.id}_nodes';
+          final edgesKey = '${region.id}_edges';
+          if (box.containsKey(nodesKey) && box.containsKey(edgesKey)) {
+            debugPrint('RoutingService: Found compiled offline graph for region: ${region.name}. Loading...');
+            final List cachedNodesData = box.get(nodesKey) ?? [];
+            final List cachedEdgesData = box.get(edgesKey) ?? [];
+
+            final nodes = cachedNodesData.map((n) => OSMNode.fromJson(n as Map)).toList();
+            final edges = cachedEdgesData.map((e) => OSMEdge.fromJson(e as Map)).toList();
+
+            final dynamicRoutes = _findRouteOnDynamicGraph(start, end, nodes, edges);
+            if (dynamicRoutes.isNotEmpty) {
+              debugPrint('RoutingService: Successfully calculated path using dynamic offline OSM graph.');
+              _saveToCache(start, end, dynamicRoutes);
+              return dynamicRoutes;
+            }
+          }
+        } catch (e) {
+          debugPrint('RoutingService: Error solving on dynamic graph: $e');
+        }
+      }
+    }
+
+    // 3. Check local Dumaguete road network graph Dijkstra routing
     final localGraphRoutes = OfflineRoutingData.getOfflineRoutes(start, end);
     if (localGraphRoutes.isNotEmpty) {
       debugPrint('RoutingService: Serving routes from local offline road graph');
       _saveToCache(start, end, localGraphRoutes);
       return localGraphRoutes;
     }
+
 
     // 3. Fallback to straight-line route if no graph matches (e.g. outside Dumaguete)
     debugPrint('RoutingService: Fallback to straight-line route');
@@ -228,9 +266,9 @@ class RoutingService {
   List<RouteInfo>? _checkCache(LatLng start, LatLng end) {
     try {
       final box = Hive.box('routesCache');
-      print('RoutingService: Checking cache with ${box.length} entries. Start: $start, End: $end');
+      debugPrint('RoutingService: Checking cache with ${box.length} entries. Start: $start, End: $end');
       if (box.isEmpty) {
-        print('RoutingService: Cache box is empty.');
+        debugPrint('RoutingService: Cache box is empty.');
         return null;
       }
 
@@ -275,6 +313,245 @@ class RoutingService {
     }
     return null;
   }
+
+  List<RouteInfo> _findRouteOnDynamicGraph(
+    LatLng start,
+    LatLng end,
+    List<OSMNode> nodes,
+    List<OSMEdge> edges,
+  ) {
+    OSMNode? nearestStart;
+    OSMNode? nearestEnd;
+    double minStartDist = double.infinity;
+    double minEndDist = double.infinity;
+
+    for (final node in nodes) {
+      final dStart = DistanceService.calculateDistance(start, node.position);
+      final dEnd = DistanceService.calculateDistance(end, node.position);
+
+      if (dStart < minStartDist) {
+        minStartDist = dStart;
+        nearestStart = node;
+      }
+      if (dEnd < minEndDist) {
+        minEndDist = dEnd;
+        nearestEnd = node;
+      }
+    }
+
+    if (nearestStart == null || nearestEnd == null || minStartDist > 15.0 || minEndDist > 15.0) {
+      debugPrint('RoutingService: Snapped coordinates are too far from dynamic OSM graph region.');
+      return [];
+    }
+
+    final path = _dynamicAStar(nearestStart.id, nearestEnd.id, nodes, edges);
+    if (path.isEmpty && nearestStart.id != nearestEnd.id) {
+      return [];
+    }
+
+    final routes = <RouteInfo>[];
+    final primaryRoute = _buildDynamicRouteInfo(start, end, nearestStart, nearestEnd, minStartDist, path);
+    if (primaryRoute != null) {
+      routes.add(primaryRoute);
+    }
+
+    // Alternative route (blocking the primary path's main edge)
+    if (path.isNotEmpty) {
+      final Set<String> primaryEdgeIds = path.map((e) => e.id).toSet();
+      final altPath = _dynamicAStar(nearestStart.id, nearestEnd.id, nodes, edges, blockedEdgeIds: primaryEdgeIds);
+      if (altPath.isNotEmpty) {
+        final altRoute = _buildDynamicRouteInfo(start, end, nearestStart, nearestEnd, minStartDist, altPath);
+        if (altRoute != null) {
+          routes.add(altRoute);
+        }
+      }
+    }
+
+    return routes;
+  }
+
+  List<OSMEdge> _dynamicAStar(
+    String startId,
+    String endId,
+    List<OSMNode> nodes,
+    List<OSMEdge> edges, {
+    Set<String> blockedEdgeIds = const {},
+  }) {
+    final Map<String, LatLng> nodePositions = {
+      for (final n in nodes) n.id: n.position
+    };
+
+    double heuristic(String id) {
+      final pos = nodePositions[id];
+      final endPos = nodePositions[endId];
+      if (pos == null || endPos == null) return 0.0;
+      return DistanceService.calculateDistance(pos, endPos) * 1000.0;
+    }
+
+    final Map<String, double> gScore = {
+      for (final n in nodes) n.id: double.infinity
+    };
+    gScore[startId] = 0.0;
+
+    final Map<String, double> fScore = {
+      for (final n in nodes) n.id: double.infinity
+    };
+    fScore[startId] = heuristic(startId);
+
+    final Set<String> openSet = {startId};
+    final Map<String, OSMEdge?> previousEdges = {};
+
+    while (openSet.isNotEmpty) {
+      String? currentId;
+      double minF = double.infinity;
+      for (final id in openSet) {
+        if (fScore[id]! < minF) {
+          minF = fScore[id]!;
+          currentId = id;
+        }
+      }
+
+      if (currentId == null || currentId == endId) {
+        break;
+      }
+
+      openSet.remove(currentId);
+
+      final neighbors = edges.where((e) =>
+          (e.sourceId == currentId || e.targetId == currentId) &&
+          !blockedEdgeIds.contains(e.id));
+
+      for (final edge in neighbors) {
+        final neighborId = edge.sourceId == currentId ? edge.targetId : edge.sourceId;
+        final tentativeGScore = gScore[currentId]! + edge.distance;
+
+        if (tentativeGScore < gScore[neighborId]!) {
+          previousEdges[neighborId] = edge;
+          gScore[neighborId] = tentativeGScore;
+          fScore[neighborId] = tentativeGScore + heuristic(neighborId);
+          openSet.add(neighborId);
+        }
+      }
+    }
+
+    if (gScore[endId] == double.infinity) {
+      return [];
+    }
+
+    final List<OSMEdge> path = [];
+    String current = endId;
+    while (current != startId) {
+      final edge = previousEdges[current];
+      if (edge == null) break;
+      path.insert(0, edge);
+      current = edge.sourceId == current ? edge.targetId : edge.sourceId;
+    }
+
+    return path;
+  }
+
+  RouteInfo? _buildDynamicRouteInfo(
+    LatLng start,
+    LatLng end,
+    OSMNode nearestStart,
+    OSMNode nearestEnd,
+    double minStartDist,
+    List<OSMEdge> path,
+  ) {
+    final List<LatLng> fullPolyline = [];
+    fullPolyline.add(start);
+
+    final List<double> speedLimits = [];
+    speedLimits.add(40.0); // Start segment default limit
+
+    final List<RouteStep> steps = [];
+    double totalDistance = 0.0;
+
+    totalDistance += minStartDist * 1000;
+    steps.add(
+      RouteStep(
+        instruction: 'Head toward ${nearestStart.name}',
+        location: start,
+        distance: minStartDist * 1000,
+        duration: (minStartDist * 1000) / 10.0,
+      ),
+    );
+
+    String currentId = nearestStart.id;
+    String currentStreet = '';
+
+    for (final edge in path) {
+      List<LatLng> edgePoints;
+      if (edge.targetId == currentId) {
+        edgePoints = edge.polyline.reversed.toList();
+        currentId = edge.sourceId;
+      } else {
+        edgePoints = edge.polyline.toList();
+        currentId = edge.targetId;
+      }
+
+      if (fullPolyline.isNotEmpty && edgePoints.isNotEmpty) {
+        if (fullPolyline.last == edgePoints.first) {
+          edgePoints.removeAt(0);
+        }
+      }
+      fullPolyline.addAll(edgePoints);
+      totalDistance += edge.distance;
+
+      // Add speed limits for each segment in this edge
+      for (int j = 0; j < edgePoints.length - 1; j++) {
+        speedLimits.add(edge.speedLimit);
+      }
+
+      if (edge.streetName != currentStreet) {
+        currentStreet = edge.streetName;
+        steps.add(
+          RouteStep(
+            instruction: 'Turn onto ${edge.streetName}',
+            location: edgePoints.isNotEmpty ? edgePoints.first : edge.polyline.first,
+            distance: edge.distance,
+            duration: edge.distance / 10.0,
+          ),
+        );
+      } else if (steps.isNotEmpty) {
+        final lastIdx = steps.length - 1;
+        steps[lastIdx] = RouteStep(
+          instruction: steps[lastIdx].instruction,
+          location: steps[lastIdx].location,
+          distance: steps[lastIdx].distance + edge.distance,
+          duration: steps[lastIdx].duration + (edge.distance / 10.0),
+        );
+      }
+    }
+
+    if (fullPolyline.last != end) {
+      fullPolyline.add(end);
+      speedLimits.add(40.0); // End segment default limit
+    }
+
+    final finalDist = DistanceService.calculateDistance(nearestEnd.position, end) * 1000;
+    totalDistance += finalDist;
+
+    steps.add(
+      RouteStep(
+        instruction: 'Arrive at destination',
+        location: nearestEnd.position,
+        distance: finalDist,
+        duration: finalDist / 10.0,
+      ),
+    );
+
+    final double totalDuration = totalDistance / 10.0;
+
+    return RouteInfo(
+      polyline: fullPolyline,
+      distance: totalDistance,
+      duration: totalDuration,
+      steps: steps,
+      speedLimits: speedLimits,
+    );
+  }
+
 
   String _cleanInstruction(String instruction) {
     return instruction

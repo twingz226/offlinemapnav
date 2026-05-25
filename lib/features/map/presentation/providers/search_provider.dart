@@ -3,103 +3,14 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../data/models/favorite_place_model.dart';
+import '../../services/poi_service.dart';
+import '../../../../core/utils/fuzzy_matcher.dart';
 import 'favorites_provider.dart';
 import 'network_provider.dart';
 import 'location_provider.dart';
 
-// Pre-defined offline points of interest (POIs) in the Dumaguete region
-final builtinPlaces = [
-  FavoritePlaceModel(
-    name: 'Silliman University',
-    latitude: 9.3120,
-    longitude: 123.3075,
-    description: 'Historic private research university in Dumaguete.',
-  ),
-  FavoritePlaceModel(
-    name: 'Dumaguete Belfry',
-    latitude: 9.3072,
-    longitude: 123.3086,
-    description: 'Historic stone bell tower built in 1811.',
-  ),
-  FavoritePlaceModel(
-    name: 'Rizal Boulevard',
-    latitude: 9.3088,
-    longitude: 123.3106,
-    description: 'Scenic waterfront promenade named after Dr. Jose Rizal.',
-  ),
-  FavoritePlaceModel(
-    name: 'Robinsons Place Dumaguete',
-    latitude: 9.2942,
-    longitude: 123.3005,
-    description: 'Major shopping mall in Dumaguete City.',
-  ),
-  FavoritePlaceModel(
-    name: 'Dumaguete Port',
-    latitude: 9.3117,
-    longitude: 123.3128,
-    description: 'Seaport connecting Dumaguete to Cebu and other islands.',
-  ),
-  FavoritePlaceModel(
-    name: 'Quezon Park',
-    latitude: 9.3075,
-    longitude: 123.3082,
-    description: 'Public park situated near the belfry and cathedral.',
-  ),
-  FavoritePlaceModel(
-    name: 'Valencia Town Plaza',
-    latitude: 9.2818,
-    longitude: 123.2458,
-    description: 'Cool municipal plaza nestled in the foothills of Mt. Talinis.',
-  ),
-  FavoritePlaceModel(
-    name: 'Casaroro Falls',
-    latitude: 9.2811,
-    longitude: 123.2081,
-    description: 'Breathtaking single-column waterfall nestled in Valencia forest.',
-  ),
-  FavoritePlaceModel(
-    name: 'Pulangbato Falls',
-    latitude: 9.3069,
-    longitude: 123.2039,
-    description: 'Popular red-rock waterfall with natural swimming pools in Valencia.',
-  ),
-  FavoritePlaceModel(
-    name: 'Tejero Highland Resort and Waterpark',
-    latitude: 9.2906,
-    longitude: 123.2389,
-    description: 'Resort with outdoor natural spring pools and water slides.',
-  ),
-  FavoritePlaceModel(
-    name: 'Forest Camp Riverside Resort',
-    latitude: 9.2831,
-    longitude: 123.2458,
-    description: 'Mountain resort featuring cold spring pools, zip lines, and campsites.',
-  ),
-  FavoritePlaceModel(
-    name: 'Dauin Beach & Marine Sanctuaries',
-    latitude: 9.1895,
-    longitude: 123.2646,
-    description: 'Beautiful sandy beach and world-renowned coral reef diving resorts.',
-  ),
-  FavoritePlaceModel(
-    name: 'Apo Island Beach & Dive Resort',
-    latitude: 9.0792,
-    longitude: 123.2711,
-    description: 'Famous beach resort and marine sanctuary for swimming with sea turtles.',
-  ),
-  FavoritePlaceModel(
-    name: 'Tierra Alta Resort & Pool',
-    latitude: 9.2974,
-    longitude: 123.2566,
-    description: 'Luxury hillside resort featuring a iconic lighthouse and infinity pool.',
-  ),
-  FavoritePlaceModel(
-    name: 'Manjuyod Sandbar Beach',
-    latitude: 9.6153,
-    longitude: 123.1557,
-    description: 'Stunning white sandbar and cottages often called the Maldives of the Philippines.',
-  ),
-];
+// Maintain global reference for backward compatibility with map_page.dart
+final builtinPlaces = POIService.builtinPlaces;
 
 final searchQueryProvider = StateProvider<String>((ref) => '');
 
@@ -167,7 +78,7 @@ final searchResultsProvider = FutureProvider.autoDispose<List<FavoritePlaceModel
     }
   }
 
-  // Offline / local search fallback
+  // Offline / local search fallback using Fuzzy Matcher
   final allPlaces = [
     ...favorites,
     ...builtinPlaces,
@@ -178,11 +89,32 @@ final searchResultsProvider = FutureProvider.autoDispose<List<FavoritePlaceModel
     uniquePlaces['${p.name}_${p.latitude.toStringAsFixed(4)}_${p.longitude.toStringAsFixed(4)}'] = p;
   }
 
-  return uniquePlaces.values.where((place) {
-    final nameMatch = place.name.toLowerCase().contains(query.toLowerCase());
-    final descMatch = place.description.toLowerCase().contains(query.toLowerCase());
-    return nameMatch || descMatch;
-  }).toList();
+  // Calculate similarity scores for all offline places
+  final scoredPlaces = uniquePlaces.values.map((place) {
+    final nameScore = FuzzyMatcher.getCombinedSimilarity(query, place.name);
+    final descScore = FuzzyMatcher.getCombinedSimilarity(query, place.description);
+    
+    // Weighted score: 70% name match, 30% description match
+    final double score = (nameScore * 0.7) + (descScore * 0.3);
+    
+    return _ScoredPlace(place: place, score: score);
+  }).where((item) => item.score > 0.18).toList(); // threshold for relevance
+
+  // Sort by highest similarity score
+  scoredPlaces.sort((a, b) => b.score.compareTo(a.score));
+
+  return scoredPlaces.map((item) => item.place).toList();
 });
+
+class _ScoredPlace {
+  final FavoritePlaceModel place;
+  final double score;
+
+  _ScoredPlace({
+    required this.place,
+    required this.score,
+  });
+}
+
 
 

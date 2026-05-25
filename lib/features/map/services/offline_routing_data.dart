@@ -1,4 +1,5 @@
 import 'package:latlong2/latlong.dart';
+import 'package:flutter/foundation.dart';
 import 'distance_service.dart';
 import 'routing_service.dart';
 
@@ -340,13 +341,13 @@ class OfflineRoutingData {
       }
     }
 
-    print('OfflineRoutingData: Checking offline routes from start=$start to end=$end');
-    print('OfflineRoutingData: nearestStart=${nearestStart?.name} (dist=${minStartDist.toStringAsFixed(2)} km)');
-    print('OfflineRoutingData: nearestEnd=${nearestEnd?.name} (dist=${minEndDist.toStringAsFixed(2)} km)');
+    debugPrint('OfflineRoutingData: Checking offline routes from start=$start to end=$end');
+    debugPrint('OfflineRoutingData: nearestStart=${nearestStart?.name} (dist=${minStartDist.toStringAsFixed(2)} km)');
+    debugPrint('OfflineRoutingData: nearestEnd=${nearestEnd?.name} (dist=${minEndDist.toStringAsFixed(2)} km)');
 
     // If coordinates are too far from our Dumaguete region, fall back to empty list
     if (minStartDist > 15.0 || minEndDist > 15.0 || nearestStart == null || nearestEnd == null) {
-      print('OfflineRoutingData: Snapped distance is too far (> 15 km) from regional graph. Falling back.');
+      debugPrint('OfflineRoutingData: Snapped distance is too far (> 15 km) from regional graph. Falling back.');
       return [];
     }
 

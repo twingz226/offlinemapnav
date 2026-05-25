@@ -19,6 +19,7 @@ class NavigationState {
   final double remainingDuration; // in seconds
   final bool isRerouting;
   final Position? snappedPosition;
+  final double currentSpeedLimit; // in km/h
 
   NavigationState({
     this.activeRoute,
@@ -31,6 +32,7 @@ class NavigationState {
     this.remainingDuration = 0,
     this.isRerouting = false,
     this.snappedPosition,
+    this.currentSpeedLimit = 40.0,
   });
 
   NavigationState copyWith({
@@ -44,6 +46,7 @@ class NavigationState {
     double? remainingDuration,
     bool? isRerouting,
     Position? Function()? snappedPosition,
+    double? currentSpeedLimit,
   }) {
     return NavigationState(
       activeRoute: activeRoute != null ? activeRoute() : this.activeRoute,
@@ -56,8 +59,10 @@ class NavigationState {
       remainingDuration: remainingDuration ?? this.remainingDuration,
       isRerouting: isRerouting ?? this.isRerouting,
       snappedPosition: snappedPosition != null ? snappedPosition() : this.snappedPosition,
+      currentSpeedLimit: currentSpeedLimit ?? this.currentSpeedLimit,
     );
   }
+
 
   String get formattedRemainingDistance {
     if (remainingDistance < 1000) {
@@ -98,6 +103,8 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
   
   int _lastSpokenStepIndex = -1;
   double _lastSpokenDistance = double.infinity;
+  DateTime? _lastSpeedWarningTime;
+
 
   Future<void> startNavigation({
     required LatLng start,
@@ -264,6 +271,14 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
       maxSnapDistanceMeters: 30.0,
     );
 
+    // Get speed limit for current segment
+    double currentLimit = 40.0;
+    if (route.speedLimits != null &&
+        segmentIndex >= 0 &&
+        segmentIndex < route.speedLimits!.length) {
+      currentLimit = route.speedLimits![segmentIndex];
+    }
+
     // Calculate heading from snapped segment bearing if available
     double heading = rawPosition.heading;
     if (segmentIndex != -1 && segmentIndex < route.polyline.length - 1) {
@@ -288,7 +303,22 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
       isMocked: rawPosition.isMocked,
     );
 
-    state = state.copyWith(snappedPosition: () => snappedPos);
+    // Speed Warning Check (warn user via TTS once every 30s)
+    final currentSpeedKmh = rawPosition.speed * 3.6;
+    if (currentSpeedKmh > currentLimit * 1.1) {
+      final now = DateTime.now();
+      if (_lastSpeedWarningTime == null ||
+          now.difference(_lastSpeedWarningTime!).inSeconds > 30) {
+        _lastSpeedWarningTime = now;
+        _voiceService.speak("Warning, you are exceeding the speed limit!");
+      }
+    }
+
+    state = state.copyWith(
+      snappedPosition: () => snappedPos,
+      currentSpeedLimit: currentLimit,
+    );
+
 
     // 3. Advance Steps Check
     final steps = route.steps;

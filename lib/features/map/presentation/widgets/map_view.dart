@@ -8,6 +8,8 @@ import '../../../../core/constants/tile_config.dart';
 import '../../data/models/favorite_place_model.dart';
 import 'user_location_indicator.dart';
 
+enum MapOrientationMode { northUp, headingUp, navigation3D }
+
 class MapView extends StatefulWidget {
   final List<FavoritePlaceModel> favorites;
   final List<FavoritePlaceModel> categoryPlaces;
@@ -21,6 +23,8 @@ class MapView extends StatefulWidget {
   final List<List<LatLng>>? alternativePolylines;
   final void Function(LatLng center, LatLngBounds bounds, double zoom)? onViewportChanged;
   final bool isNavigating;
+  final MapOrientationMode orientationMode;
+  final double heading;
 
   const MapView({
     super.key,
@@ -36,6 +40,8 @@ class MapView extends StatefulWidget {
     this.alternativePolylines,
     this.onViewportChanged,
     this.isNavigating = false,
+    this.orientationMode = MapOrientationMode.northUp,
+    this.heading = 0.0,
   });
 
   @override
@@ -246,7 +252,7 @@ class _MapViewState extends State<MapView> with SingleTickerProviderStateMixin {
       );
     }).toList();
 
-    return FlutterMap(
+    Widget mapWidget = FlutterMap(
       mapController: widget.mapController,
       options: MapOptions(
         initialCenter: const LatLng(9.3068, 123.3054),
@@ -345,5 +351,22 @@ class _MapViewState extends State<MapView> with SingleTickerProviderStateMixin {
           ),
       ],
     );
+
+    if (widget.orientationMode == MapOrientationMode.navigation3D) {
+      mapWidget = ClipRect(
+        child: Transform(
+          transform: Matrix4.identity()
+            ..setEntry(3, 2, 0.0015) // perspective depth
+            ..rotateX(0.7), // tilt forward by ~40 degrees
+          alignment: Alignment.center,
+          child: FractionallySizedBox(
+            heightFactor: 1.45, // expand map height to cover empty margins due to 3D tilt
+            child: mapWidget,
+          ),
+        ),
+      );
+    }
+
+    return mapWidget;
   }
 }

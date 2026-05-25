@@ -5,6 +5,10 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:dio/dio.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'dart:async';
+import 'package:flutter_compass/flutter_compass.dart';
+import 'hud_navigation_page.dart';
+
 
 import '../widgets/map_view.dart';
 import '../widgets/auto_download_overlay.dart';
@@ -13,9 +17,11 @@ import '../providers/auto_download_provider.dart';
 import '../providers/favorites_provider.dart';
 import '../providers/search_provider.dart';
 import '../providers/navigation_provider.dart';
+import '../providers/trip_recorder_provider.dart';
 import '../../data/models/favorite_place_model.dart';
 import '../../services/routing_service.dart';
 import '../../services/distance_service.dart';
+import '../../services/poi_service.dart';
 
 class MapPage extends ConsumerStatefulWidget {
   const MapPage({super.key});
@@ -24,7 +30,7 @@ class MapPage extends ConsumerStatefulWidget {
   ConsumerState<MapPage> createState() => _MapPageState();
 }
 
-class _MapPageState extends ConsumerState<MapPage> {
+class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStateMixin {
   late final MapController _mapController;
   late final TextEditingController _searchController;
   FavoritePlaceModel? _selectedPlace;
@@ -33,17 +39,140 @@ class _MapPageState extends ConsumerState<MapPage> {
   bool _isLoadingCategoryPlaces = false;
   LatLng? _currentMapCenter;
 
+  MapOrientationMode _orientationMode = MapOrientationMode.northUp;
+  StreamSubscription<CompassEvent>? _compassSubscription;
+  double _currentHeading = 0.0;
+  
+  late final AnimationController _recordPulseController;
+
   @override
   void initState() {
     super.initState();
     _mapController = MapController();
     _searchController = TextEditingController();
+    _startCompassListening();
+    _recordPulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1),
+    )..repeat(reverse: true);
   }
 
   @override
   void dispose() {
+    _recordPulseController.dispose();
+    _compassSubscription?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _handleTripRecordingToggle() async {
+    final recorder = ref.read(tripRecorderProvider.notifier);
+    final state = ref.read(tripRecorderProvider);
+
+    if (state.isRecording) {
+      recorder.stopRecording();
+      final nameController = TextEditingController(
+        text: 'Trip on ${DateTime.now().toString().substring(0, 16)}',
+      );
+      final tripName = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: const Text('Save Recorded Trip'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Do you want to save this trip log? You can review statistics in settings.'),
+              const SizedBox(height: 16),
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Trip Name',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                recorder.discardRecording();
+                Navigator.pop(context);
+              },
+              child: const Text('Discard', style: TextStyle(color: Colors.red)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, nameController.text),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      );
+
+      if (tripName != null && tripName.trim().isNotEmpty) {
+        final path = await recorder.saveCurrentTrip(tripName);
+        if (path != null && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Trip "$tripName" saved successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Recording discarded (no GPS points captured).'),
+            ),
+          );
+        }
+      }
+    } else {
+      recorder.startRecording();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Trip recording started.'),
+          backgroundColor: Colors.blue,
+        ),
+      );
+    }
+  }
+
+  void _startCompassListening() {
+    _compassSubscription = FlutterCompass.events?.listen((event) {
+      if (!mounted) return;
+      final heading = event.heading;
+      if (heading != null) {
+        setState(() {
+          _currentHeading = heading;
+        });
+
+        // Rotate map dynamically when locked to heading modes
+        if (_orientationMode == MapOrientationMode.headingUp ||
+            _orientationMode == MapOrientationMode.navigation3D) {
+          final userPos = ref.read(locationProvider).value;
+          final isMoving = (userPos?.speed ?? 0.0) > 1.0;
+          final double activeHeading = isMoving ? (userPos?.heading ?? 0.0) : heading;
+          _mapController.rotate(-activeHeading);
+        }
+      }
+    });
+  }
+
+  void _toggleOrientationMode() {
+    setState(() {
+      switch (_orientationMode) {
+        case MapOrientationMode.northUp:
+          _orientationMode = MapOrientationMode.headingUp;
+          break;
+        case MapOrientationMode.headingUp:
+          _orientationMode = MapOrientationMode.navigation3D;
+          break;
+        case MapOrientationMode.navigation3D:
+          _orientationMode = MapOrientationMode.northUp;
+          _mapController.rotate(0.0);
+          break;
+      }
+    });
   }
 
   Future<void> _centerOnUser() async {
@@ -92,9 +221,46 @@ class _MapPageState extends ConsumerState<MapPage> {
   List<FavoritePlaceModel> _getCategoryPlaces() {
     if (_selectedCategory == null) return [];
 
+    final categoryLower = _selectedCategory!.toLowerCase();
+    
+    // 1. Get built-in spots matching this category
+    final localPOIs = POIService.getPlacesByCategory(categoryLower);
+
+    // 2. Filter user favorites matching this category keywords
+    final favorites = ref.read(favoritesProvider);
+    final matchingFavorites = favorites.where((place) {
+      final name = place.name.toLowerCase();
+      final desc = place.description.toLowerCase();
+
+      switch (categoryLower) {
+        case 'beaches':
+          return name.contains('beach') || desc.contains('beach') || name.contains('sandbar') || desc.contains('sandbar');
+        case 'falls':
+          return name.contains('falls') || desc.contains('falls') || name.contains('waterfall') || desc.contains('waterfall');
+        case 'pools':
+          return name.contains('pool') || desc.contains('pool') || name.contains('waterpark') || desc.contains('waterpark');
+        case 'springs':
+          return name.contains('spring') || desc.contains('spring');
+        case 'camps':
+          return name.contains('camp') || desc.contains('camp');
+        case 'food':
+          return name.contains('restaurant') || desc.contains('restaurant') || name.contains('cafe') || desc.contains('cafe') || name.contains('pastries') || name.contains('inato') || name.contains('bar') || name.contains('bistro') || name.contains('diner') || name.contains('eatery');
+        case 'gas':
+          return name.contains('petron') || name.contains('shell') || name.contains('caltex') || name.contains('seaoil') || name.contains('gas') || desc.contains('gasoline') || desc.contains('fuel');
+        case 'lodging':
+          return name.contains('hotel') || desc.contains('hotel') || name.contains('resort') || desc.contains('resort') || name.contains('suites') || name.contains('mansion') || name.contains('hostel') || name.contains('bed and breakfast');
+        case 'medical':
+          return name.contains('medical') || desc.contains('medical') || name.contains('hospital') || desc.contains('hospital') || name.contains('clinic') || name.contains('drug') || name.contains('pharmacy');
+        case 'shopping':
+          return name.contains('mall') || desc.contains('mall') || name.contains('plaza') || name.contains('super') || name.contains('market') || name.contains('store');
+        default:
+          return false;
+      }
+    }).toList();
+
     final allPlaces = [
-      ...ref.read(favoritesProvider),
-      ...builtinPlaces,
+      ...matchingFavorites,
+      ...localPOIs,
       ..._onlineCategoryPlaces,
     ];
 
@@ -103,24 +269,7 @@ class _MapPageState extends ConsumerState<MapPage> {
       uniquePlaces['${p.name.trim()}_${p.latitude.toStringAsFixed(4)}_${p.longitude.toStringAsFixed(4)}'] = p;
     }
 
-    final query = _selectedCategory!.toLowerCase();
-    return uniquePlaces.values.where((place) {
-      final name = place.name.toLowerCase();
-      final desc = place.description.toLowerCase();
-
-      if (query == 'beaches') {
-        return name.contains('beach') || desc.contains('beach') || name.contains('sandbar') || desc.contains('sandbar');
-      } else if (query == 'falls') {
-        return name.contains('falls') || desc.contains('falls') || name.contains('waterfall') || desc.contains('waterfall');
-      } else if (query == 'pools') {
-        return name.contains('pool') || desc.contains('pool') || name.contains('waterpark') || desc.contains('waterpark');
-      } else if (query == 'springs') {
-        return name.contains('spring') || desc.contains('spring');
-      } else if (query == 'camps') {
-        return name.contains('camp') || desc.contains('camp');
-      }
-      return false;
-    }).toList();
+    return uniquePlaces.values.toList();
   }
 
   Future<void> _fetchOnlineCategoryPlaces(String category) async {
@@ -152,6 +301,21 @@ class _MapPageState extends ConsumerState<MapPage> {
           break;
         case 'camps':
           queryTerm = 'camp site';
+          break;
+        case 'food':
+          queryTerm = 'restaurant';
+          break;
+        case 'gas':
+          queryTerm = 'gas station';
+          break;
+        case 'lodging':
+          queryTerm = 'hotel';
+          break;
+        case 'medical':
+          queryTerm = 'hospital';
+          break;
+        case 'shopping':
+          queryTerm = 'mall';
           break;
       }
 
@@ -246,7 +410,13 @@ class _MapPageState extends ConsumerState<MapPage> {
       (name: 'Pools', icon: Icons.pool, color: Colors.indigo.shade600),
       (name: 'Springs', icon: Icons.hot_tub, color: Colors.teal.shade600),
       (name: 'Camps', icon: Icons.forest, color: Colors.green.shade700),
+      (name: 'Food', icon: Icons.restaurant, color: Colors.orange.shade700),
+      (name: 'Gas', icon: Icons.local_gas_station, color: Colors.deepOrange.shade700),
+      (name: 'Lodging', icon: Icons.hotel, color: Colors.purple.shade700),
+      (name: 'Medical', icon: Icons.medical_services, color: Colors.red.shade700),
+      (name: 'Shopping', icon: Icons.shopping_bag, color: Colors.pink.shade700),
     ];
+
 
     return SizedBox(
       height: 44,
@@ -534,6 +704,7 @@ class _MapPageState extends ConsumerState<MapPage> {
     final searchQuery = ref.watch(searchQueryProvider);
     final searchResultsAsync = ref.watch(searchResultsProvider);
     final navState = ref.watch(navigationProvider);
+    final recorderState = ref.watch(tripRecorderProvider);
 
     // Auto center on user location when it first loads successfully
     ref.listen<AsyncValue<Position?>>(locationProvider, (previous, next) {
@@ -616,6 +787,8 @@ class _MapPageState extends ConsumerState<MapPage> {
             routePolyline: navState.activeRoute?.polyline,
             alternativePolylines: navState.alternativeRoutes.map((r) => r.polyline).toList(),
             isNavigating: navState.isNavigating,
+            orientationMode: _orientationMode,
+            heading: _currentHeading,
             onViewportChanged: (center, bounds, zoom) {
               ref.read(autoDownloadProvider.notifier).onMapPositionChanged(bounds, zoom);
               WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -666,6 +839,54 @@ class _MapPageState extends ConsumerState<MapPage> {
               });
             },
           ),
+
+          if (recorderState.isRecording)
+            Positioned(
+              left: 16,
+              top: statusBarHeight + 68,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.15),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Pulsing Red Dot
+                    AnimatedBuilder(
+                      animation: _recordPulseController,
+                      builder: (context, child) {
+                        return Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: Colors.red.withValues(alpha: 0.3 + 0.7 * _recordPulseController.value),
+                            shape: BoxShape.circle,
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Recording: ${(recorderState.totalDistance / 1000.0).toStringAsFixed(2)} km',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
 
           // Location status panel (moved down below the search bar and filter chips if not navigating)
           if (!navState.isNavigating)
@@ -1108,17 +1329,39 @@ class _MapPageState extends ConsumerState<MapPage> {
                               ),
                             ],
                           ),
-                          IconButton.filled(
-                            style: IconButton.styleFrom(
-                              backgroundColor: Theme.of(context).colorScheme.error,
-                              foregroundColor: Theme.of(context).colorScheme.onError,
-                              padding: const EdgeInsets.all(16),
-                            ),
-                            icon: const Icon(Icons.close),
-                            onPressed: () {
-                              ref.read(navigationProvider.notifier).stopNavigation();
-                            },
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton.filledTonal(
+                                style: IconButton.styleFrom(
+                                  padding: const EdgeInsets.all(16),
+                                ),
+                                icon: const Icon(Icons.dashboard_customize_rounded),
+                                tooltip: 'HUD Mode',
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => const HudNavigationPage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                              const SizedBox(width: 8),
+                              IconButton.filled(
+                                style: IconButton.styleFrom(
+                                  backgroundColor: Theme.of(context).colorScheme.error,
+                                  foregroundColor: Theme.of(context).colorScheme.onError,
+                                  padding: const EdgeInsets.all(16),
+                                ),
+                                icon: const Icon(Icons.close),
+                                onPressed: () {
+                                  ref.read(navigationProvider.notifier).stopNavigation();
+                                },
+                              ),
+                            ],
                           ),
+
                         ],
                       ),
                     ],
@@ -1286,15 +1529,75 @@ class _MapPageState extends ConsumerState<MapPage> {
                 ),
               ),
             ),
+          // Dynamic Control Buttons Panel (Compass orientation and Center on User)
+          Positioned(
+            right: 16,
+            bottom: () {
+              if (navState.isNavigating) {
+                return 130.0;
+              } else if (navState.activeRoute != null) {
+                return 280.0;
+              } else if (_selectedPlace != null) {
+                return 240.0;
+              }
+              return 24.0;
+            }(),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FloatingActionButton(
+                  heroTag: 'compassMode',
+                  mini: true,
+                  elevation: 6,
+                  backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                  foregroundColor: Theme.of(context).colorScheme.onPrimaryContainer,
+                  onPressed: _toggleOrientationMode,
+                  tooltip: 'Map Orientation',
+                  child: () {
+                    switch (_orientationMode) {
+                      case MapOrientationMode.northUp:
+                        return const Icon(Icons.explore, size: 22);
+                      case MapOrientationMode.headingUp:
+                        return const Icon(Icons.navigation, size: 22);
+                      case MapOrientationMode.navigation3D:
+                        return const Icon(Icons.view_in_ar, size: 22);
+                    }
+                  }(),
+                ),
+                const SizedBox(height: 12),
+                FloatingActionButton(
+                  heroTag: 'gpsCenter',
+                  mini: true,
+                  elevation: 6,
+                  backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                  foregroundColor: Theme.of(context).colorScheme.onPrimaryContainer,
+                  onPressed: _centerOnUser,
+                  tooltip: 'Center on User',
+                  child: const Icon(Icons.my_location, size: 22),
+                ),
+                const SizedBox(height: 12),
+                FloatingActionButton(
+                  heroTag: 'tripRecord',
+                  mini: true,
+                  elevation: 6,
+                  backgroundColor: recorderState.isRecording 
+                      ? Colors.red[800] 
+                      : Theme.of(context).colorScheme.primaryContainer,
+                  foregroundColor: recorderState.isRecording 
+                      ? Colors.white 
+                      : Theme.of(context).colorScheme.onPrimaryContainer,
+                  onPressed: _handleTripRecordingToggle,
+                  tooltip: recorderState.isRecording ? 'Stop Recording' : 'Record Trip',
+                  child: Icon(
+                    recorderState.isRecording ? Icons.square : Icons.radio_button_checked,
+                    size: 20,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
-      floatingActionButton: navState.isNavigating
-          ? null
-          : FloatingActionButton(
-              heroTag: 'gps',
-              onPressed: _centerOnUser,
-              child: const Icon(Icons.my_location),
-            ),
     );
   }
 }
