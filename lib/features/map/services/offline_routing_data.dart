@@ -1,0 +1,384 @@
+import 'package:latlong2/latlong.dart';
+import 'distance_service.dart';
+import 'routing_service.dart';
+
+class GraphNode {
+  final String id;
+  final String name;
+  final LatLng position;
+
+  GraphNode({
+    required this.id,
+    required this.name,
+    required this.position,
+  });
+}
+
+class GraphEdge {
+  final String id;
+  final String sourceId;
+  final String targetId;
+  final String streetName;
+  final List<LatLng> polyline;
+  final double distance; // in meters
+
+  GraphEdge({
+    required this.id,
+    required this.sourceId,
+    required this.targetId,
+    required this.streetName,
+    required this.polyline,
+    required this.distance,
+  });
+}
+
+class OfflineRoutingData {
+  static final List<GraphNode> nodes = [
+    GraphNode(id: 'belfry', name: 'Dumaguete Belfry', position: LatLng(9.3063, 123.3082)),
+    GraphNode(id: 'silliman_gate', name: 'Silliman University Main Gate', position: LatLng(9.3130, 123.3065)),
+    GraphNode(id: 'airport_junc', name: 'Dumaguete Airport Junction', position: LatLng(9.3332, 123.3013)),
+    GraphNode(id: 'sibulan_port', name: 'Sibulan Port', position: LatLng(9.3582, 123.3444)),
+    GraphNode(id: 'robinsons', name: 'Robinsons Place Dumaguete', position: LatLng(9.2963, 123.3006)),
+    GraphNode(id: 'bacong', name: 'Bacong Crossing', position: LatLng(9.2483, 123.2950)),
+    GraphNode(id: 'valencia_junc', name: 'Valencia Crossing', position: LatLng(9.2804, 123.2458)),
+    GraphNode(id: 'valencia_plaza', name: 'Valencia Plaza', position: LatLng(9.2810, 123.2450)),
+    GraphNode(id: 'real_silliman', name: 'Real St & Silliman Ave Junction', position: LatLng(9.3081, 123.3060)),
+    GraphNode(id: 'boulevard', name: 'Rizal Boulevard Beachfront', position: LatLng(9.3075, 123.3115)),
+  ];
+
+  static final List<GraphEdge> edges = [
+    GraphEdge(
+      id: 'bacong_robinsons',
+      sourceId: 'bacong',
+      targetId: 'robinsons',
+      streetName: 'Dumaguete-South Road',
+      distance: 5400.0,
+      polyline: [
+        LatLng(9.2483, 123.2950),
+        LatLng(9.2550, 123.2960),
+        LatLng(9.2620, 123.2970),
+        LatLng(9.2700, 123.2980),
+        LatLng(9.2800, 123.2990),
+        LatLng(9.2900, 123.3000),
+        LatLng(9.2963, 123.3006),
+      ],
+    ),
+    GraphEdge(
+      id: 'robinsons_belfry',
+      sourceId: 'robinsons',
+      targetId: 'belfry',
+      streetName: 'Real Street',
+      distance: 1400.0,
+      polyline: [
+        LatLng(9.2963, 123.3006),
+        LatLng(9.2980, 123.3015),
+        LatLng(9.3010, 123.3035),
+        LatLng(9.3040, 123.3060),
+        LatLng(9.3063, 123.3082),
+      ],
+    ),
+    GraphEdge(
+      id: 'belfry_real_silliman',
+      sourceId: 'belfry',
+      targetId: 'real_silliman',
+      streetName: 'Real Street',
+      distance: 300.0,
+      polyline: [
+        LatLng(9.3063, 123.3082),
+        LatLng(9.3072, 123.3071),
+        LatLng(9.3081, 123.3060),
+      ],
+    ),
+    GraphEdge(
+      id: 'real_silliman_gate',
+      sourceId: 'real_silliman',
+      targetId: 'silliman_gate',
+      streetName: 'North National Highway',
+      distance: 550.0,
+      polyline: [
+        LatLng(9.3081, 123.3060),
+        LatLng(9.3105, 123.3062),
+        LatLng(9.3130, 123.3065),
+      ],
+    ),
+    GraphEdge(
+      id: 'silliman_gate_airport',
+      sourceId: 'silliman_gate',
+      targetId: 'airport_junc',
+      streetName: 'North National Highway',
+      distance: 2300.0,
+      polyline: [
+        LatLng(9.3130, 123.3065),
+        LatLng(9.3180, 123.3050),
+        LatLng(9.3240, 123.3035),
+        LatLng(9.3290, 123.3020),
+        LatLng(9.3332, 123.3013),
+      ],
+    ),
+    GraphEdge(
+      id: 'airport_sibulan',
+      sourceId: 'airport_junc',
+      targetId: 'sibulan_port',
+      streetName: 'North National Highway',
+      distance: 5600.0,
+      polyline: [
+        LatLng(9.3332, 123.3013),
+        LatLng(9.3370, 123.3050),
+        LatLng(9.3410, 123.3110),
+        LatLng(9.3460, 123.3180),
+        LatLng(9.3500, 123.3260),
+        LatLng(9.3540, 123.3350),
+        LatLng(9.3582, 123.3444),
+      ],
+    ),
+    GraphEdge(
+      id: 'robinsons_valencia_junc',
+      sourceId: 'robinsons',
+      targetId: 'valencia_junc',
+      streetName: 'Dumaguete-Valencia Road',
+      distance: 6300.0,
+      polyline: [
+        LatLng(9.2963, 123.3006),
+        LatLng(9.2930, 123.2850),
+        LatLng(9.2890, 123.2700),
+        LatLng(9.2840, 123.2550),
+        LatLng(9.2804, 123.2458),
+      ],
+    ),
+    GraphEdge(
+      id: 'valencia_junc_plaza',
+      sourceId: 'valencia_junc',
+      targetId: 'valencia_plaza',
+      streetName: 'Valencia Road',
+      distance: 120.0,
+      polyline: [
+        LatLng(9.2804, 123.2458),
+        LatLng(9.2810, 123.2450),
+      ],
+    ),
+    GraphEdge(
+      id: 'real_silliman_boulevard',
+      sourceId: 'real_silliman',
+      targetId: 'boulevard',
+      streetName: 'Silliman Avenue',
+      distance: 600.0,
+      polyline: [
+        LatLng(9.3081, 123.3060),
+        LatLng(9.3080, 123.3090),
+        LatLng(9.3075, 123.3115),
+      ],
+    ),
+    GraphEdge(
+      id: 'boulevard_silliman_gate',
+      sourceId: 'boulevard',
+      targetId: 'silliman_gate',
+      streetName: 'Rizal Boulevard',
+      distance: 800.0,
+      polyline: [
+        LatLng(9.3075, 123.3115),
+        LatLng(9.3100, 123.3105),
+        LatLng(9.3120, 123.3085),
+        LatLng(9.3130, 123.3065),
+      ],
+    ),
+    GraphEdge(
+      id: 'boulevard_belfry',
+      sourceId: 'boulevard',
+      targetId: 'belfry',
+      streetName: 'Silliman Avenue & Boulevard Link',
+      distance: 400.0,
+      polyline: [
+        LatLng(9.3075, 123.3115),
+        LatLng(9.3070, 123.3095),
+        LatLng(9.3063, 123.3082),
+      ],
+    ),
+  ];
+
+  static RouteInfo? getOfflineRoute(LatLng start, LatLng end) {
+    // 1. Find the nearest nodes to start and end
+    GraphNode? nearestStart;
+    GraphNode? nearestEnd;
+    double minStartDist = double.infinity;
+    double minEndDist = double.infinity;
+
+    for (final node in nodes) {
+      final dStart = DistanceService.calculateDistance(start, node.position);
+      final dEnd = DistanceService.calculateDistance(end, node.position);
+
+      if (dStart < minStartDist) {
+        minStartDist = dStart;
+        nearestStart = node;
+      }
+      if (dEnd < minEndDist) {
+        minEndDist = dEnd;
+        nearestEnd = node;
+      }
+    }
+
+    print('OfflineRoutingData: Checking offline route from start=$start to end=$end');
+    print('OfflineRoutingData: nearestStart=${nearestStart?.name} (dist=${minStartDist.toStringAsFixed(2)} km)');
+    print('OfflineRoutingData: nearestEnd=${nearestEnd?.name} (dist=${minEndDist.toStringAsFixed(2)} km)');
+
+    // If coordinates are too far from our Dumaguete region, fall back to straight line
+    if (minStartDist > 15.0 || minEndDist > 15.0 || nearestStart == null || nearestEnd == null) {
+      print('OfflineRoutingData: Snapped distance is too far (> 15 km) from regional graph. Falling back.');
+      return null;
+    }
+
+    // 2. Run Dijkstra to find the shortest path of edges
+    final path = _dijkstra(nearestStart.id, nearestEnd.id);
+    if (path.isEmpty && nearestStart.id != nearestEnd.id) {
+      return null;
+    }
+
+    // 3. Construct the polyline and steps
+    final List<LatLng> fullPolyline = [];
+    fullPolyline.add(start); // Start at user's actual coordinate
+
+    final List<RouteStep> steps = [];
+    double totalDistance = 0.0;
+    
+    // Add initial step from actual start to nearest node
+    totalDistance += minStartDist * 1000;
+    steps.add(
+      RouteStep(
+        instruction: 'Head toward ${nearestStart.name}',
+        location: start,
+        distance: minStartDist * 1000,
+        duration: (minStartDist * 1000) / 10.0,
+      ),
+    );
+
+    String currentId = nearestStart.id;
+    String currentStreet = '';
+
+    for (final edge in path) {
+      List<LatLng> edgePoints;
+      if (edge.targetId == currentId) {
+        edgePoints = edge.polyline.reversed.toList();
+        currentId = edge.sourceId;
+      } else {
+        edgePoints = edge.polyline.toList();
+        currentId = edge.targetId;
+      }
+
+      // Merge polyline points
+      if (fullPolyline.isNotEmpty && edgePoints.isNotEmpty) {
+        if (fullPolyline.last == edgePoints.first) {
+          edgePoints.removeAt(0);
+        }
+      }
+      fullPolyline.addAll(edgePoints);
+      totalDistance += edge.distance;
+
+      // Add navigation step instruction on street change
+      if (edge.streetName != currentStreet) {
+        currentStreet = edge.streetName;
+        steps.add(
+          RouteStep(
+            instruction: 'Turn onto ${edge.streetName}',
+            location: edgePoints.isNotEmpty ? edgePoints.first : edge.polyline.first,
+            distance: edge.distance,
+            duration: edge.distance / 10.0, // average 36 km/h (10m/s)
+          ),
+        );
+      } else if (steps.isNotEmpty) {
+        // Accumulate distance for same street name
+        final lastIdx = steps.length - 1;
+        steps[lastIdx] = RouteStep(
+          instruction: steps[lastIdx].instruction,
+          location: steps[lastIdx].location,
+          distance: steps[lastIdx].distance + edge.distance,
+          duration: steps[lastIdx].duration + (edge.distance / 10.0),
+        );
+      }
+    }
+
+    // Add final point to destination
+    if (fullPolyline.last != end) {
+      fullPolyline.add(end);
+    }
+    
+    final finalDist = DistanceService.calculateDistance(nearestEnd.position, end) * 1000;
+    totalDistance += finalDist;
+
+    steps.add(
+      RouteStep(
+        instruction: 'Arrive at destination',
+        location: nearestEnd.position,
+        distance: finalDist,
+        duration: finalDist / 10.0,
+      ),
+    );
+
+    // Assume average speed 36 km/h (10 m/s)
+    final double totalDuration = totalDistance / 10.0;
+
+    return RouteInfo(
+      polyline: fullPolyline,
+      distance: totalDistance,
+      duration: totalDuration,
+      steps: steps,
+    );
+  }
+
+  static List<GraphEdge> _dijkstra(String startId, String endId) {
+    final Map<String, double> distances = {};
+    final Map<String, GraphEdge?> previousEdges = {};
+    final Set<String> unvisited = {};
+
+    for (final node in nodes) {
+      distances[node.id] = double.infinity;
+      previousEdges[node.id] = null;
+      unvisited.add(node.id);
+    }
+    distances[startId] = 0.0;
+
+    while (unvisited.isNotEmpty) {
+      String? currentId;
+      double minDist = double.infinity;
+
+      for (final id in unvisited) {
+        if (distances[id]! < minDist) {
+          minDist = distances[id]!;
+          currentId = id;
+        }
+      }
+
+      if (currentId == null || currentId == endId) {
+        break;
+      }
+
+      unvisited.remove(currentId);
+
+      // Bidirectional neighbor search
+      final neighbors = edges.where((e) => e.sourceId == currentId || e.targetId == currentId);
+      for (final edge in neighbors) {
+        final neighborId = edge.sourceId == currentId ? edge.targetId : edge.sourceId;
+        if (!unvisited.contains(neighborId)) continue;
+
+        final newDist = distances[currentId]! + edge.distance;
+        if (newDist < distances[neighborId]!) {
+          distances[neighborId] = newDist;
+          previousEdges[neighborId] = edge;
+        }
+      }
+    }
+
+    if (distances[endId] == double.infinity) {
+      return [];
+    }
+
+    final List<GraphEdge> path = [];
+    String current = endId;
+    while (current != startId) {
+      final edge = previousEdges[current];
+      if (edge == null) break;
+      path.insert(0, edge);
+      current = edge.sourceId == current ? edge.targetId : edge.sourceId;
+    }
+
+    return path;
+  }
+}
