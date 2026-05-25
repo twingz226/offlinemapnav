@@ -196,6 +196,11 @@ class OfflineRoutingData {
   ];
 
   static RouteInfo? getOfflineRoute(LatLng start, LatLng end) {
+    final routes = getOfflineRoutes(start, end);
+    return routes.isNotEmpty ? routes[0] : null;
+  }
+
+  static List<RouteInfo> getOfflineRoutes(LatLng start, LatLng end) {
     // 1. Find the nearest nodes to start and end
     GraphNode? nearestStart;
     GraphNode? nearestEnd;
@@ -216,23 +221,73 @@ class OfflineRoutingData {
       }
     }
 
-    print('OfflineRoutingData: Checking offline route from start=$start to end=$end');
+    print('OfflineRoutingData: Checking offline routes from start=$start to end=$end');
     print('OfflineRoutingData: nearestStart=${nearestStart?.name} (dist=${minStartDist.toStringAsFixed(2)} km)');
     print('OfflineRoutingData: nearestEnd=${nearestEnd?.name} (dist=${minEndDist.toStringAsFixed(2)} km)');
 
-    // If coordinates are too far from our Dumaguete region, fall back to straight line
+    // If coordinates are too far from our Dumaguete region, fall back to empty list
     if (minStartDist > 15.0 || minEndDist > 15.0 || nearestStart == null || nearestEnd == null) {
       print('OfflineRoutingData: Snapped distance is too far (> 15 km) from regional graph. Falling back.');
-      return null;
+      return [];
     }
 
-    // 2. Run Dijkstra to find the shortest path of edges
-    final path = _dijkstra(nearestStart.id, nearestEnd.id);
-    if (path.isEmpty && nearestStart.id != nearestEnd.id) {
-      return null;
+    final List<RouteInfo> routes = [];
+
+    // --- Route 1: Shortest Path (Standard Dijkstra) ---
+    final primaryPath = _dijkstra(nearestStart.id, nearestEnd.id, blockedEdgeIds: {});
+    if (primaryPath.isNotEmpty || nearestStart.id == nearestEnd.id) {
+      final primaryRoute = _buildRouteInfo(start, end, nearestStart, nearestEnd, minStartDist, primaryPath);
+      if (primaryRoute != null) {
+        routes.add(primaryRoute);
+      }
     }
 
-    // 3. Construct the polyline and steps
+    // --- Route 2: Alternative Path (Exclude/Penalize the primary path's main edge) ---
+    if (primaryPath.isNotEmpty) {
+      final Set<String> primaryEdgeIds = primaryPath.map((e) => e.id).toSet();
+      final alternativePath = _dijkstra(nearestStart.id, nearestEnd.id, blockedEdgeIds: primaryEdgeIds);
+      if (alternativePath.isNotEmpty) {
+        final alternativeRoute = _buildRouteInfo(start, end, nearestStart, nearestEnd, minStartDist, alternativePath);
+        if (alternativeRoute != null && !_areRoutesIdentical(routes[0], alternativeRoute)) {
+          routes.add(alternativeRoute);
+        }
+      } else {
+        // If blocking all edges disconnected the graph, try blocking only the most significant edge
+        for (final edgeToBlock in primaryPath) {
+          final altPath = _dijkstra(nearestStart.id, nearestEnd.id, blockedEdgeIds: {edgeToBlock.id});
+          if (altPath.isNotEmpty) {
+            final altRoute = _buildRouteInfo(start, end, nearestStart, nearestEnd, minStartDist, altPath);
+            if (altRoute != null && !_areRoutesIdentical(routes[0], altRoute)) {
+              routes.add(altRoute);
+              break; // Found one alternative
+            }
+          }
+        }
+      }
+    }
+
+    return routes;
+  }
+
+  static bool _areRoutesIdentical(RouteInfo r1, RouteInfo r2) {
+    if (r1.polyline.length != r2.polyline.length) return false;
+    for (int i = 0; i < r1.polyline.length; i++) {
+      if (r1.polyline[i].latitude != r2.polyline[i].latitude ||
+          r1.polyline[i].longitude != r2.polyline[i].longitude) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static RouteInfo? _buildRouteInfo(
+    LatLng start,
+    LatLng end,
+    GraphNode nearestStart,
+    GraphNode nearestEnd,
+    double minStartDist,
+    List<GraphEdge> path,
+  ) {
     final List<LatLng> fullPolyline = [];
     fullPolyline.add(start); // Start at user's actual coordinate
 
@@ -323,7 +378,11 @@ class OfflineRoutingData {
     );
   }
 
-  static List<GraphEdge> _dijkstra(String startId, String endId) {
+  static List<GraphEdge> _dijkstra(
+    String startId,
+    String endId, {
+    Set<String> blockedEdgeIds = const {},
+  }) {
     final Map<String, double> distances = {};
     final Map<String, GraphEdge?> previousEdges = {};
     final Set<String> unvisited = {};
@@ -352,8 +411,10 @@ class OfflineRoutingData {
 
       unvisited.remove(currentId);
 
-      // Bidirectional neighbor search
-      final neighbors = edges.where((e) => e.sourceId == currentId || e.targetId == currentId);
+      // Bidirectional neighbor search with edge blocking support
+      final neighbors = edges.where((e) =>
+          (e.sourceId == currentId || e.targetId == currentId) &&
+          !blockedEdgeIds.contains(e.id));
       for (final edge in neighbors) {
         final neighborId = edge.sourceId == currentId ? edge.targetId : edge.sourceId;
         if (!unvisited.contains(neighborId)) continue;

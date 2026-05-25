@@ -144,9 +144,9 @@ class RoutingService {
               ));
             }
 
-            // Save the primary route to cache
+            // Save all routes to cache
             if (routes.isNotEmpty) {
-              _saveToCache(start, end, routes[0]);
+              _saveToCache(start, end, routes);
             }
 
             return routes;
@@ -163,17 +163,18 @@ class RoutingService {
     // --- Offline Mode Fallbacks ---
 
     // 1. Check local offline route cache first (for any route generated previously)
-    final cachedRoute = _checkCache(start, end);
-    if (cachedRoute != null) {
-      debugPrint('RoutingService: Serving route from offline cache');
-      return [cachedRoute];
+    final cachedRoutes = _checkCache(start, end);
+    if (cachedRoutes != null && cachedRoutes.isNotEmpty) {
+      debugPrint('RoutingService: Serving routes from offline cache');
+      return cachedRoutes;
     }
 
     // 2. Check local Dumaguete road network graph Dijkstra routing
-    final localGraphRoute = OfflineRoutingData.getOfflineRoute(start, end);
-    if (localGraphRoute != null) {
-      debugPrint('RoutingService: Serving route from local offline road graph');
-      return [localGraphRoute];
+    final localGraphRoutes = OfflineRoutingData.getOfflineRoutes(start, end);
+    if (localGraphRoutes.isNotEmpty) {
+      debugPrint('RoutingService: Serving routes from local offline road graph');
+      _saveToCache(start, end, localGraphRoutes);
+      return localGraphRoutes;
     }
 
     // 3. Fallback to straight-line route if no graph matches (e.g. outside Dumaguete)
@@ -198,32 +199,32 @@ class RoutingService {
       ),
     ];
 
-    return [
-      RouteInfo(
-        polyline: polyline,
-        distance: distance,
-        duration: duration,
-        steps: steps,
-      )
-    ];
+    final fallbackRoute = RouteInfo(
+      polyline: polyline,
+      distance: distance,
+      duration: duration,
+      steps: steps,
+    );
+
+    return [fallbackRoute];
   }
 
   String _cacheKey(LatLng start, LatLng end) {
     return '${start.latitude.toStringAsFixed(4)},${start.longitude.toStringAsFixed(4)}->${end.latitude.toStringAsFixed(4)},${end.longitude.toStringAsFixed(4)}';
   }
 
-  void _saveToCache(LatLng start, LatLng end, RouteInfo route) {
+  void _saveToCache(LatLng start, LatLng end, List<RouteInfo> routes) {
     try {
       final box = Hive.box('routesCache');
       final key = _cacheKey(start, end);
-      box.put(key, route.toJson());
-      debugPrint('RoutingService: Successfully cached route under key: $key');
+      box.put(key, routes.map((r) => r.toJson()).toList());
+      debugPrint('RoutingService: Successfully cached ${routes.length} routes under key: $key');
     } catch (e) {
-      debugPrint('RoutingService: Failed to cache route: $e');
+      debugPrint('RoutingService: Failed to cache routes: $e');
     }
   }
 
-  RouteInfo? _checkCache(LatLng start, LatLng end) {
+  List<RouteInfo>? _checkCache(LatLng start, LatLng end) {
     try {
       final box = Hive.box('routesCache');
       print('RoutingService: Checking cache with ${box.length} entries. Start: $start, End: $end');
@@ -256,9 +257,12 @@ class RoutingService {
               // If start and end are within ~100 meters (0.1 km) of cached points, reuse it
               if (startDist < 0.1 && endDist < 0.1) {
                 final cachedData = box.get(key);
-                if (cachedData is Map) {
-                  debugPrint('RoutingService: Loaded cached route for key: $key');
-                  return RouteInfo.fromJson(cachedData);
+                if (cachedData is List) {
+                  debugPrint('RoutingService: Loaded cached routes list for key: $key');
+                  return cachedData.map((s) => RouteInfo.fromJson(s as Map)).toList();
+                } else if (cachedData is Map) {
+                  debugPrint('RoutingService: Loaded single cached route for key: $key');
+                  return [RouteInfo.fromJson(cachedData)];
                 }
               }
             }

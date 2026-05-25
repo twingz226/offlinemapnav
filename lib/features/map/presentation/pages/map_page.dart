@@ -14,6 +14,7 @@ import '../providers/favorites_provider.dart';
 import '../providers/search_provider.dart';
 import '../providers/navigation_provider.dart';
 import '../../data/models/favorite_place_model.dart';
+import '../../services/routing_service.dart';
 
 class MapPage extends ConsumerStatefulWidget {
   const MapPage({super.key});
@@ -341,6 +342,133 @@ class _MapPageState extends ConsumerState<MapPage> {
     );
   }
 
+  String _formatDistance(double meters) {
+    if (meters < 1000) {
+      return '${meters.toStringAsFixed(0)} m';
+    }
+    return '${(meters / 1000).toStringAsFixed(1)} km';
+  }
+
+  String _formatDuration(double seconds) {
+    final minutes = (seconds / 60).round();
+    if (minutes < 60) {
+      return '$minutes min';
+    }
+    final hours = minutes ~/ 60;
+    final remainingMin = minutes % 60;
+    return '${hours}h ${remainingMin}m';
+  }
+
+  String _getRouteViaString(RouteInfo route) {
+    final Set<String> streets = {};
+    for (final step in route.steps) {
+      final instr = step.instruction;
+      if (instr.contains('onto ')) {
+        final street = instr.split('onto ').last.trim();
+        if (street.isNotEmpty) streets.add(street);
+      } else if (instr.contains('on ')) {
+        final street = instr.split('on ').last.trim();
+        if (street.isNotEmpty) streets.add(street);
+      }
+    }
+    
+    streets.removeWhere((s) => s.toLowerCase().contains('starting') || s.toLowerCase().contains('destination'));
+
+    if (streets.isEmpty) {
+      return "Local Roads";
+    }
+    return "via ${streets.take(2).join(' & ')}";
+  }
+
+  Widget _buildRouteOptionCard(
+    BuildContext context, {
+    required RouteInfo route,
+    required bool isActive,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(context);
+    final borderColor = isActive ? Colors.blueAccent : Colors.grey.shade300;
+    final backgroundColor = isActive ? Colors.blue.withValues(alpha: 0.05) : theme.colorScheme.surface;
+    
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: 180,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          border: Border.all(color: borderColor, width: isActive ? 2.0 : 1.0),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: isActive ? Colors.blueAccent : Colors.grey.shade200,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: isActive ? Colors.white : Colors.grey.shade700,
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                Icon(
+                  isActive ? Icons.check_circle : Icons.circle_outlined,
+                  size: 16,
+                  color: isActive ? Colors.blueAccent : Colors.grey,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _formatDuration(route.duration),
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                height: 1.1,
+              ),
+            ),
+            Text(
+              _formatDistance(route.distance),
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey.shade600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _getRouteViaString(route),
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+                overflow: TextOverflow.ellipsis,
+              ),
+              maxLines: 1,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final location = ref.watch(locationProvider);
@@ -363,6 +491,43 @@ class _MapPageState extends ConsumerState<MapPage> {
           }
         },
       );
+    });
+
+    ref.listen(navigationProvider, (previous, next) {
+      if (next.activeRoute != null && (previous == null || previous.activeRoute != next.activeRoute)) {
+        final polyline = next.activeRoute!.polyline;
+        if (polyline.isNotEmpty) {
+          double minLat = polyline.first.latitude;
+          double maxLat = polyline.first.latitude;
+          double minLng = polyline.first.longitude;
+          double maxLng = polyline.first.longitude;
+
+          for (final p in polyline) {
+            if (p.latitude < minLat) minLat = p.latitude;
+            if (p.latitude > maxLat) maxLat = p.latitude;
+            if (p.longitude < minLng) minLng = p.longitude;
+            if (p.longitude > maxLng) maxLng = p.longitude;
+          }
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              try {
+                _mapController.fitCamera(
+                  CameraFit.bounds(
+                    bounds: LatLngBounds(
+                      LatLng(minLat, minLng),
+                      LatLng(maxLat, maxLng),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 50.0, vertical: 80.0),
+                  ),
+                );
+              } catch (e) {
+                _mapController.move(polyline.first, 14.0);
+              }
+            }
+          });
+        }
+      }
     });
 
     final double statusBarHeight = MediaQuery.of(context).padding.top;
@@ -442,8 +607,8 @@ class _MapPageState extends ConsumerState<MapPage> {
 
 
 
-          // Floating Search Bar & Results Dropdown (only when NOT actively navigating)
-          if (!navState.isNavigating)
+          // Floating Search Bar & Results Dropdown (only when NOT actively navigating and NOT in route selection mode)
+          if (!navState.isNavigating && navState.activeRoute == null)
             Positioned(
               top: statusBarHeight + 16,
               left: 16,
@@ -604,7 +769,7 @@ class _MapPageState extends ConsumerState<MapPage> {
             ),
 
           // Auto-download overlay (modern progress toast)
-          if (!navState.isNavigating)
+          if (!navState.isNavigating && navState.activeRoute == null)
             Positioned(
               bottom: _selectedPlace != null ? 200 : 90,
               left: 0,
@@ -675,7 +840,7 @@ class _MapPageState extends ConsumerState<MapPage> {
             ),
 
           // Destination Selection Details Card (Start Navigation)
-          if (_selectedPlace != null && !navState.isNavigating)
+          if (_selectedPlace != null && !navState.isNavigating && navState.activeRoute == null)
             Positioned(
               bottom: 24,
               left: 16,
@@ -784,11 +949,8 @@ class _MapPageState extends ConsumerState<MapPage> {
                                 final endLatLng = LatLng(_selectedPlace!.latitude, _selectedPlace!.longitude);
                                 
                                 final name = _selectedPlace!.name;
-                                setState(() {
-                                  _selectedPlace = null;
-                                });
                                 
-                                await ref.read(navigationProvider.notifier).startNavigation(
+                                await ref.read(navigationProvider.notifier).calculateRoutes(
                                   start: startLatLng,
                                   end: endLatLng,
                                   destinationName: name,
@@ -872,6 +1034,134 @@ class _MapPageState extends ConsumerState<MapPage> {
                             onPressed: () {
                               ref.read(navigationProvider.notifier).stopNavigation();
                             },
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+          // Route Selection & Preview Card (displays alternative routes and shortcuts)
+          if (navState.activeRoute != null && !navState.isNavigating)
+            Positioned(
+              bottom: 24,
+              left: 16,
+              right: 16,
+              child: Card(
+                elevation: 10,
+                shadowColor: Colors.black.withValues(alpha: 0.3),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Select Route Option',
+                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.route, size: 14, color: Colors.blue.shade700),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _onlineCategoryPlaces.isNotEmpty || searchQuery.isNotEmpty ? "Online OSRM" : "Offline Dijkstra",
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue.shade700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      
+                      // Horizontal list of route options
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            // 1. Active Route Option
+                            _buildRouteOptionCard(
+                              context,
+                              route: navState.activeRoute!,
+                              isActive: true,
+                              label: "Recommended",
+                              onTap: () {}, // Already selected
+                            ),
+                            
+                            // 2. Alternative Route Options
+                            ...navState.alternativeRoutes.map((route) {
+                              return Padding(
+                                padding: const EdgeInsets.only(left: 10),
+                                child: _buildRouteOptionCard(
+                                  context,
+                                  route: route,
+                                  isActive: false,
+                                  label: "Alternative",
+                                  onTap: () {
+                                    ref.read(navigationProvider.notifier).selectAlternativeRoute(route);
+                                  },
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
+                      
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              onPressed: () {
+                                ref.read(navigationProvider.notifier).stopNavigation();
+                              },
+                              child: const Text('Cancel'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              onPressed: () {
+                                ref.read(navigationProvider.notifier).startGuidance();
+                              },
+                              icon: const Icon(Icons.navigation),
+                              label: const Text('Start Guidance'),
+                            ),
                           ),
                         ],
                       ),

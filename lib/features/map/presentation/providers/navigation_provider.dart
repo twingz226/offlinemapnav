@@ -5,7 +5,6 @@ import '../../services/routing_service.dart';
 import '../../services/voice_navigation_service.dart';
 import '../../services/distance_service.dart';
 import 'location_provider.dart';
-import 'network_provider.dart';
 
 class NavigationState {
   final RouteInfo? activeRoute;
@@ -142,6 +141,87 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
       }
     } catch (_) {
       state = state.copyWith(isNavigating: false, isRerouting: false);
+    }
+  }
+
+  Future<void> calculateRoutes({
+    required LatLng start,
+    required LatLng end,
+    required String destinationName,
+  }) async {
+    state = state.copyWith(
+      isNavigating: false,
+      destination: () => end,
+      destinationName: () => destinationName,
+      isRerouting: true,
+      activeRoute: () => null,
+      alternativeRoutes: [],
+    );
+
+    bool isOnline = false;
+    try {
+      final connectivityResult = await Connectivity().checkConnectivity();
+      isOnline = !connectivityResult.contains(ConnectivityResult.none);
+    } catch (_) {}
+
+    try {
+      final routes = await _routingService.getRoutes(
+        start: start,
+        end: end,
+        isOnline: isOnline,
+      );
+
+      if (routes.isNotEmpty) {
+        final primaryRoute = routes[0];
+        final alts = routes.sublist(1);
+
+        state = state.copyWith(
+          activeRoute: () => primaryRoute,
+          alternativeRoutes: alts,
+          currentStepIndex: 0,
+          remainingDistance: primaryRoute.distance,
+          remainingDuration: primaryRoute.duration,
+          isRerouting: false,
+        );
+      } else {
+        state = state.copyWith(isRerouting: false);
+      }
+    } catch (_) {
+      state = state.copyWith(isRerouting: false);
+    }
+  }
+
+  void selectAlternativeRoute(RouteInfo route) {
+    if (state.activeRoute == null) return;
+    
+    final List<RouteInfo> newAlts = List.from(state.alternativeRoutes);
+    final prevActive = state.activeRoute!;
+    
+    // Remove the chosen alternative and add the previous active route to the alternatives list
+    newAlts.removeWhere((r) => r.polyline == route.polyline);
+    newAlts.add(prevActive);
+    
+    state = state.copyWith(
+      activeRoute: () => route,
+      alternativeRoutes: newAlts,
+      currentStepIndex: 0,
+      remainingDistance: route.distance,
+      remainingDuration: route.duration,
+    );
+  }
+
+  void startGuidance() {
+    if (state.activeRoute == null) return;
+    
+    state = state.copyWith(
+      isNavigating: true,
+    );
+    
+    _lastSpokenStepIndex = -1;
+    _lastSpokenDistance = double.infinity;
+    
+    if (state.activeRoute!.steps.isNotEmpty) {
+      _speakStep(0, state.activeRoute!.steps[0].instruction);
     }
   }
 
