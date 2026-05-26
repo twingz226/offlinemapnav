@@ -54,6 +54,11 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
       vsync: this,
       duration: const Duration(seconds: 1),
     )..repeat(reverse: true);
+    
+    // Automatically center on last known or current location on startup
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _centerOnUserOnStartup();
+    });
   }
 
   @override
@@ -189,6 +194,24 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
           ),
         );
       }
+    }
+  }
+
+  Future<void> _centerOnUserOnStartup() async {
+    try {
+      // 1. Instantly center on last known location if cached
+      final lastPos = await ref.read(locationProvider.notifier).getLastKnownLocation();
+      if (lastPos != null && mounted) {
+        _mapController.move(LatLng(lastPos.latitude, lastPos.longitude), 15.0);
+        return;
+      }
+      // 2. Fetch fresh high-accuracy position in the background
+      final freshPos = await ref.read(locationProvider.notifier).getCurrentLocation();
+      if (freshPos != null && mounted) {
+        _mapController.move(LatLng(freshPos.latitude, freshPos.longitude), 15.0);
+      }
+    } catch (e) {
+      debugPrint('Failed to auto-center on startup: $e');
     }
   }
 

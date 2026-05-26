@@ -263,7 +263,9 @@ class _MapViewState extends State<MapView> with SingleTickerProviderStateMixin {
     Widget mapWidget = FlutterMap(
       mapController: widget.mapController,
       options: MapOptions(
-        initialCenter: const LatLng(9.3068, 123.3054),
+        initialCenter: widget.userPosition != null
+            ? LatLng(widget.userPosition!.latitude, widget.userPosition!.longitude)
+            : const LatLng(9.3068, 123.3054),
         initialZoom: 13,
         onTap: widget.onTap,
         onPositionChanged: (position, hasGesture) {
