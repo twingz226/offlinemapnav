@@ -1306,25 +1306,32 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                navState.formattedETA,
-                                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.green,
-                                    ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                '${navState.formattedRemainingDistance} • Heading to ${navState.destinationName ?? "Destination"}',
-                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                      color: Colors.grey[600],
-                                    ),
-                              ),
-                            ],
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  navState.formattedETA,
+                                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.green,
+                                      ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${navState.formattedRemainingDistance} • Heading to ${navState.destinationName ?? "Destination"}',
+                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                        color: Colors.grey[600],
+                                      ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
                           ),
+                          const SizedBox(width: 16),
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
