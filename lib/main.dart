@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_native_splash/flutter_native_splash.dart';
 
 import 'app.dart';
 import 'core/constants/tile_config.dart';
@@ -10,7 +11,8 @@ import 'core/theme/theme_provider.dart';
 import 'features/map/data/models/favorite_place_model.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  final widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
+  FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
   // Load theme preference
   final prefs = await SharedPreferences.getInstance();
@@ -52,4 +54,7 @@ Future<void> main() async {
       child: const OfflineNavigatorApp(),
     ),
   );
+
+  // Dismiss the splash screen once the app has initialized.
+  FlutterNativeSplash.remove();
 }
