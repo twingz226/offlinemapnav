@@ -171,6 +171,7 @@ class RoutingService {
     }
 
     // --- Offline Mode Fallbacks ---
+    debugPrint('RoutingService: Entering offline routing fallbacks...');
 
     // 1. Check local offline route cache first (for any route generated previously)
     final cachedRoutes = _checkCache(start, end);
@@ -179,32 +180,55 @@ class RoutingService {
       return cachedRoutes;
     }
 
-    // 2. Check compiled dynamic OSM graphs
-    for (final region in availableRegions) {
-      if (region.bounds.contains(start) && region.bounds.contains(end)) {
-        try {
-          final box = await Hive.openBox('osm_graphs');
-          final nodesKey = '${region.id}_nodes';
-          final edgesKey = '${region.id}_edges';
-          if (box.containsKey(nodesKey) && box.containsKey(edgesKey)) {
-            debugPrint('RoutingService: Found compiled offline graph for region: ${region.name}. Loading...');
-            final List cachedNodesData = box.get(nodesKey) ?? [];
-            final List cachedEdgesData = box.get(edgesKey) ?? [];
+    // 2. Check ALL compiled dynamic OSM graphs (both manual downloads and auto-compiled)
+    try {
+      final box = await Hive.openBox('osm_graphs');
+      final allKeys = box.keys.toList();
+      debugPrint('RoutingService: osm_graphs box has ${allKeys.length} keys: $allKeys');
 
-            final nodes = cachedNodesData.map((n) => OSMNode.fromJson(n as Map)).toList();
-            final edges = cachedEdgesData.map((e) => OSMEdge.fromJson(e as Map)).toList();
-
-            final dynamicRoutes = _findRouteOnDynamicGraph(start, end, nodes, edges);
-            if (dynamicRoutes.isNotEmpty) {
-              debugPrint('RoutingService: Successfully calculated path using dynamic offline OSM graph.');
-              _saveToCache(start, end, dynamicRoutes);
-              return dynamicRoutes;
-            }
-          }
-        } catch (e) {
-          debugPrint('RoutingService: Error solving on dynamic graph: $e');
+      // Collect all unique graph IDs (strip _nodes/_edges suffix)
+      final Set<String> graphIds = {};
+      for (final region in availableRegions) {
+        graphIds.add(region.id);
+      }
+      for (final key in allKeys) {
+        final keyStr = key.toString();
+        if (keyStr.endsWith('_nodes')) {
+          graphIds.add(keyStr.replaceAll('_nodes', ''));
         }
       }
+
+      debugPrint('RoutingService: Available graph IDs to try: $graphIds');
+
+      for (final graphId in graphIds) {
+        final nodesKey = '${graphId}_nodes';
+        final edgesKey = '${graphId}_edges';
+        if (box.containsKey(nodesKey) && box.containsKey(edgesKey)) {
+          debugPrint('RoutingService: Trying compiled offline graph: $graphId');
+          final List cachedNodesData = box.get(nodesKey) ?? [];
+          final List cachedEdgesData = box.get(edgesKey) ?? [];
+
+          if (cachedNodesData.isEmpty || cachedEdgesData.isEmpty) {
+            debugPrint('RoutingService: Graph $graphId has empty nodes/edges, skipping.');
+            continue;
+          }
+
+          final nodes = cachedNodesData.map((n) => OSMNode.fromJson(n as Map)).toList();
+          final edges = cachedEdgesData.map((e) => OSMEdge.fromJson(e as Map)).toList();
+          debugPrint('RoutingService: Loaded graph $graphId with ${nodes.length} nodes and ${edges.length} edges.');
+
+          final dynamicRoutes = _findRouteOnDynamicGraph(start, end, nodes, edges);
+          if (dynamicRoutes.isNotEmpty) {
+            debugPrint('RoutingService: Successfully calculated path using dynamic offline OSM graph ($graphId).');
+            _saveToCache(start, end, dynamicRoutes);
+            return dynamicRoutes;
+          } else {
+            debugPrint('RoutingService: Graph $graphId returned no routes for this start/end pair.');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('RoutingService: Error during dynamic graph routing: $e');
     }
 
     // 3. Check local Dumaguete road network graph Dijkstra routing
@@ -216,8 +240,8 @@ class RoutingService {
     }
 
 
-    // 3. Fallback to straight-line route if no graph matches (e.g. outside Dumaguete)
-    debugPrint('RoutingService: Fallback to straight-line route');
+    // 4. Fallback to straight-line route if no graph matches
+    debugPrint('RoutingService: WARNING - Falling back to straight-line route. No offline graph available for start=$start, end=$end');
     final polyline = [start, end];
     final distance = DistanceService.calculateDistance(start, end) * 1000; // convert to meters
     // Assume average speed of 40 km/h (11.1 m/s)
@@ -339,8 +363,14 @@ class RoutingService {
       }
     }
 
-    if (nearestStart == null || nearestEnd == null || minStartDist > 15.0 || minEndDist > 15.0) {
-      debugPrint('RoutingService: Snapped coordinates are too far from dynamic OSM graph region.');
+    if (nearestStart == null || nearestEnd == null) {
+      debugPrint('RoutingService: Could not find nearest nodes in dynamic OSM graph (graph empty?).');
+      return [];
+    }
+    if (minStartDist > 5.0 || minEndDist > 5.0) {
+      debugPrint('RoutingService: Snapped coordinates are too far from dynamic OSM graph region '
+          '(startDist=${minStartDist.toStringAsFixed(2)} km, endDist=${minEndDist.toStringAsFixed(2)} km). '
+          'Threshold: 5.0 km.');
       return [];
     }
 

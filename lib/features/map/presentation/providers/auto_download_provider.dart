@@ -4,9 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
+import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart' hide DownloadableRegion;
 
 import '../../services/tile_download_service.dart';
+import '../../services/osm_graph_service.dart';
+import 'download_provider.dart';
 
 /// Status of the auto-download process.
 enum AutoDownloadStatus {
@@ -89,6 +91,7 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
   AutoDownloadNotifier() : super(const AutoDownloadState());
 
   final _service = TileDownloadService();
+  final _graphService = OSMGraphService();
   Timer? _debounceTimer;
   Timer? _completedDismissTimer;
   LatLngBounds? _lastDownloadedBounds;
@@ -252,6 +255,24 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
       );
 
       _lastDownloadedBounds = expandedBounds;
+
+      // Compile OSM road graph for this viewport so offline routing can use it
+      if (hasNewTiles) {
+        try {
+          debugPrint('AutoDownload: Compiling OSM road graph for viewport: $label');
+          final graphRegion = DownloadableRegion(
+            id: _currentInstanceId,
+            name: 'Auto: $label',
+            bounds: expandedBounds,
+            minZoom: minZoom,
+            maxZoom: maxZoom,
+          );
+          await _graphService.compileGraphForRegion(graphRegion);
+          debugPrint('AutoDownload: OSM road graph compilation complete for $label');
+        } catch (e) {
+          debugPrint('AutoDownload: OSM graph compilation failed (non-fatal): $e');
+        }
+      }
 
       if (mounted) {
         if (hasNewTiles) {
