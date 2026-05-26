@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/theme_provider.dart';
 import '../providers/cache_provider.dart';
 import 'trip_history_page.dart';
+import 'navigation_routes_page.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -115,6 +116,20 @@ class SettingsPage extends ConsumerWidget {
                 context,
                 MaterialPageRoute(
                   builder: (context) => const TripHistoryPage(),
+                ),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.alt_route),
+            title: const Text('Navigation Routes'),
+            subtitle: const Text('View calculated routes and their average speeds'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const NavigationRoutesPage(),
                 ),
               );
             },

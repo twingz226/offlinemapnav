@@ -7,6 +7,7 @@ import '../../services/routing_service.dart';
 import '../../services/voice_navigation_service.dart';
 import '../../services/distance_service.dart';
 import 'location_provider.dart';
+import 'route_history_provider.dart';
 
 class NavigationState {
   final RouteInfo? activeRoute;
@@ -147,6 +148,17 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
           isRerouting: false,
         );
 
+        ref.read(routeHistoryProvider.notifier).addRouteHistory(
+          startName: 'Current Location',
+          endName: destinationName,
+          startLat: start.latitude,
+          startLng: start.longitude,
+          endLat: end.latitude,
+          endLng: end.longitude,
+          distance: primaryRoute.distance,
+          duration: primaryRoute.duration,
+        );
+
         _lastSpokenStepIndex = -1;
         _lastSpokenDistance = double.infinity;
         
@@ -199,6 +211,17 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
           remainingDistance: primaryRoute.distance,
           remainingDuration: primaryRoute.duration,
           isRerouting: false,
+        );
+
+        ref.read(routeHistoryProvider.notifier).addRouteHistory(
+          startName: 'Current Location',
+          endName: destinationName,
+          startLat: start.latitude,
+          startLng: start.longitude,
+          endLat: end.latitude,
+          endLng: end.longitude,
+          distance: primaryRoute.distance,
+          duration: primaryRoute.duration,
         );
       } else {
         state = state.copyWith(isRerouting: false);

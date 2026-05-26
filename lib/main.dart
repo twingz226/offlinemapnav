@@ -31,6 +31,7 @@ Future<void> main() async {
   Hive.registerAdapter(FavoritePlaceModelAdapter());
   await Hive.openBox<FavoritePlaceModel>('favoritesBox');
   await Hive.openBox('routesCache');
+  await Hive.openBox('routesHistory');
   await Hive.openBox('osm_graphs');
 
   // Offline tile cache
