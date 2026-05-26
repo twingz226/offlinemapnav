@@ -313,6 +313,58 @@ class OfflineRoutingData {
         LatLng(9.3053, 123.3080),
       ],
     ),
+    GraphEdge(
+      id: 'bacolod_araneta_highway',
+      sourceId: 'b_araneta_s',
+      targetId: 'b_araneta_e',
+      streetName: 'Araneta National Highway',
+      distance: 4500.0,
+      polyline: [
+        LatLng(10.65, 122.98),
+        LatLng(10.66, 122.98),
+        LatLng(10.67, 122.98),
+        LatLng(10.68, 122.98),
+        LatLng(10.69, 122.98),
+      ],
+    ),
+    GraphEdge(
+      id: 'bacolod_lacson_street',
+      sourceId: 'b_lacson_s',
+      targetId: 'b_lacson_e',
+      streetName: 'Lacson Street',
+      distance: 4500.0,
+      polyline: [
+        LatLng(10.67, 122.96),
+        LatLng(10.67, 122.97),
+        LatLng(10.67, 122.98),
+        LatLng(10.67, 122.99),
+        LatLng(10.67, 123.00),
+      ],
+    ),
+    GraphEdge(
+      id: 'bacolod_burgos_street',
+      sourceId: 'b_burgos_s',
+      targetId: 'b_burgos_e',
+      streetName: 'Burgos Street',
+      distance: 4500.0,
+      polyline: [
+        LatLng(10.66, 122.96),
+        LatLng(10.67, 122.98),
+        LatLng(10.68, 123.00),
+      ],
+    ),
+    GraphEdge(
+      id: 'bacolod_circumferential_road',
+      sourceId: 'b_circum_s',
+      targetId: 'b_circum_e',
+      streetName: 'Circumferential National Highway',
+      distance: 4500.0,
+      polyline: [
+        LatLng(10.68, 122.96),
+        LatLng(10.67, 122.98),
+        LatLng(10.66, 123.00),
+      ],
+    ),
   ];
 
   static RouteInfo? getOfflineRoute(LatLng start, LatLng end) {

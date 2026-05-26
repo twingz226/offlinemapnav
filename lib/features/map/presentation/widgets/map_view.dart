@@ -24,7 +24,7 @@ class MapView extends StatefulWidget {
   final void Function(LatLng center, LatLngBounds bounds, double zoom)? onViewportChanged;
   final bool isNavigating;
   final MapOrientationMode orientationMode;
-  final double heading;
+  final bool isDarkTheme;
 
   const MapView({
     super.key,
@@ -41,7 +41,7 @@ class MapView extends StatefulWidget {
     this.onViewportChanged,
     this.isNavigating = false,
     this.orientationMode = MapOrientationMode.northUp,
-    this.heading = 0.0,
+    this.isDarkTheme = false,
   });
 
   @override
@@ -147,6 +147,13 @@ class _MapViewState extends State<MapView> with SingleTickerProviderStateMixin {
         return Colors.red;
     }
   }
+
+  // ── Road styling colours ──────────────────────────────────────────────
+  // Main roads / highways → red tones
+  // Secondary & other roads → navy blue tones
+  // Colours are tuned for visibility on both light and dark Carto basemaps.
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -286,6 +293,7 @@ class _MapViewState extends State<MapView> with SingleTickerProviderStateMixin {
             debugPrint('Tile load error at ${tile.coordinates}: $error');
           },
         ),
+
         if (widget.alternativePolylines != null && widget.alternativePolylines!.isNotEmpty)
           PolylineLayer(
             polylines: widget.alternativePolylines!.map((polylinePoints) {

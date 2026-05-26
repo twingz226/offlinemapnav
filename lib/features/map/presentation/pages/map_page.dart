@@ -41,7 +41,6 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
 
   MapOrientationMode _orientationMode = MapOrientationMode.northUp;
   StreamSubscription<CompassEvent>? _compassSubscription;
-  double _currentHeading = 0.0;
   
   late final AnimationController _recordPulseController;
 
@@ -142,10 +141,6 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
       if (!mounted) return;
       final heading = event.heading;
       if (heading != null) {
-        setState(() {
-          _currentHeading = heading;
-        });
-
         // Rotate map dynamically when locked to heading modes
         if (_orientationMode == MapOrientationMode.headingUp ||
             _orientationMode == MapOrientationMode.navigation3D) {
@@ -705,6 +700,7 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
     final searchResultsAsync = ref.watch(searchResultsProvider);
     final navState = ref.watch(navigationProvider);
     final recorderState = ref.watch(tripRecorderProvider);
+    final isDarkTheme = Theme.of(context).brightness == Brightness.dark;
 
     // Auto center on user location when it first loads successfully
     ref.listen<AsyncValue<Position?>>(locationProvider, (previous, next) {
@@ -788,7 +784,7 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
             alternativePolylines: navState.alternativeRoutes.map((r) => r.polyline).toList(),
             isNavigating: navState.isNavigating,
             orientationMode: _orientationMode,
-            heading: _currentHeading,
+            isDarkTheme: isDarkTheme,
             onViewportChanged: (center, bounds, zoom) {
               ref.read(autoDownloadProvider.notifier).onMapPositionChanged(bounds, zoom);
               WidgetsBinding.instance.addPostFrameCallback((_) {
