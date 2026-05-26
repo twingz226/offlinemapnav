@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_provider.dart';
-import 'features/map/presentation/pages/main_navigation_page.dart';
+import 'features/map/presentation/pages/splash_page.dart';
 
 class OfflineNavigatorApp extends ConsumerWidget {
   const OfflineNavigatorApp({super.key});
@@ -30,7 +30,7 @@ class OfflineNavigatorApp extends ConsumerWidget {
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: themeMode,
-      home: const MainNavigationPage(),
+      home: const SplashPage(),
     );
   }
 }
