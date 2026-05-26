@@ -30,7 +30,7 @@ class MapPage extends ConsumerStatefulWidget {
   ConsumerState<MapPage> createState() => _MapPageState();
 }
 
-class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStateMixin {
+class _MapPageState extends ConsumerState<MapPage> with TickerProviderStateMixin {
   late final MapController _mapController;
   late final TextEditingController _searchController;
   FavoritePlaceModel? _selectedPlace;
@@ -43,6 +43,7 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
   StreamSubscription<CompassEvent>? _compassSubscription;
   
   late final AnimationController _recordPulseController;
+  AnimationController? _mapAnimationController;
 
   @override
   void initState() {
@@ -63,10 +64,63 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
 
   @override
   void dispose() {
+    _mapAnimationController?.stop();
+    _mapAnimationController?.dispose();
     _recordPulseController.dispose();
     _compassSubscription?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _animatedMapMove(LatLng destLocation, double destZoom) {
+    _mapAnimationController?.stop();
+    _mapAnimationController?.dispose();
+
+    final targetZoom = destZoom.clamp(0.0, 22.0);
+    final camera = _mapController.camera;
+    final latTween = Tween<double>(begin: camera.center.latitude, end: destLocation.latitude);
+    final lngTween = Tween<double>(begin: camera.center.longitude, end: destLocation.longitude);
+    final zoomTween = Tween<double>(begin: camera.zoom, end: targetZoom);
+
+    final controller = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+    _mapAnimationController = controller;
+
+    final Animation<double> animation = CurvedAnimation(
+      parent: controller,
+      curve: Curves.fastOutSlowIn,
+    );
+
+    controller.addListener(() {
+      if (!mounted) return;
+      _mapController.move(
+        LatLng(latTween.evaluate(animation), lngTween.evaluate(animation)),
+        zoomTween.evaluate(animation),
+      );
+    });
+
+    animation.addStatusListener((status) {
+      if (status == AnimationStatus.completed || status == AnimationStatus.dismissed) {
+        if (_mapAnimationController == controller) {
+          _mapAnimationController = null;
+        }
+        controller.dispose();
+      }
+    });
+
+    controller.forward();
+  }
+
+  void _animatedMapFit(CameraFit cameraFit) {
+    try {
+      final targetCamera = cameraFit.fit(_mapController.camera);
+      _animatedMapMove(targetCamera.center, targetCamera.zoom);
+    } catch (e) {
+      debugPrint('Failed to animate fitCamera: $e');
+      _mapController.fitCamera(cameraFit);
+    }
   }
 
   Future<void> _handleTripRecordingToggle() async {
@@ -179,13 +233,13 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
     // 1. Instantly center on last known location if cached
     final lastPos = await ref.read(locationProvider.notifier).getLastKnownLocation();
     if (lastPos != null && mounted) {
-      _mapController.move(LatLng(lastPos.latitude, lastPos.longitude), 15.0);
+      _animatedMapMove(LatLng(lastPos.latitude, lastPos.longitude), 15.0);
     }
 
     // 2. Fetch fresh high-accuracy position in the background
     final freshPos = await ref.read(locationProvider.notifier).getCurrentLocation();
     if (freshPos != null && mounted) {
-      _mapController.move(LatLng(freshPos.latitude, freshPos.longitude), 15.0);
+      _animatedMapMove(LatLng(freshPos.latitude, freshPos.longitude), 15.0);
     } else if (lastPos == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -202,13 +256,13 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
       // 1. Instantly center on last known location if cached
       final lastPos = await ref.read(locationProvider.notifier).getLastKnownLocation();
       if (lastPos != null && mounted) {
-        _mapController.move(LatLng(lastPos.latitude, lastPos.longitude), 15.0);
+        _animatedMapMove(LatLng(lastPos.latitude, lastPos.longitude), 15.0);
         return;
       }
       // 2. Fetch fresh high-accuracy position in the background
       final freshPos = await ref.read(locationProvider.notifier).getCurrentLocation();
       if (freshPos != null && mounted) {
-        _mapController.move(LatLng(freshPos.latitude, freshPos.longitude), 15.0);
+        _animatedMapMove(LatLng(freshPos.latitude, freshPos.longitude), 15.0);
       }
     } catch (e) {
       debugPrint('Failed to auto-center on startup: $e');
@@ -388,7 +442,7 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
   void _centerOnPlaces(List<FavoritePlaceModel> places) {
     if (places.isEmpty) return;
     if (places.length == 1) {
-      _mapController.move(LatLng(places.first.latitude, places.first.longitude), 14.5);
+      _animatedMapMove(LatLng(places.first.latitude, places.first.longitude), 14.5);
       return;
     }
 
@@ -405,7 +459,7 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
     }
 
     try {
-      _mapController.fitCamera(
+      _animatedMapFit(
         CameraFit.bounds(
           bounds: LatLngBounds(
             LatLng(minLat, minLng),
@@ -417,7 +471,7 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
     } catch (e) {
       final centerLat = (minLat + maxLat) / 2;
       final centerLng = (minLng + maxLng) / 2;
-      _mapController.move(LatLng(centerLat, centerLng), 12.0);
+      _animatedMapMove(LatLng(centerLat, centerLng), 12.0);
     }
   }
 
@@ -732,7 +786,7 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
           if (pos != null) {
             final activeNav = ref.read(navigationProvider);
             if (!activeNav.isNavigating && (previous == null || previous.value == null)) {
-              _mapController.move(LatLng(pos.latitude, pos.longitude), 15.0);
+              _animatedMapMove(LatLng(pos.latitude, pos.longitude), 15.0);
             }
           }
         },
@@ -765,7 +819,7 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
               try {
-                _mapController.fitCamera(
+                _animatedMapFit(
                   CameraFit.bounds(
                     bounds: LatLngBounds(
                       LatLng(minLat, minLng),
@@ -775,7 +829,7 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
                   ),
                 );
               } catch (e) {
-                _mapController.move(polyline.first, 14.0);
+                _animatedMapMove(polyline.first, 14.0);
               }
             }
           });
@@ -797,7 +851,7 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
               setState(() {
                 _selectedPlace = place;
               });
-              _mapController.move(LatLng(place.latitude, place.longitude), 15.5);
+              _animatedMapMove(LatLng(place.latitude, place.longitude), 15.5);
             },
             userPosition: navState.isNavigating && navState.snappedPosition != null
                 ? navState.snappedPosition
@@ -1042,7 +1096,7 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                   onTap: () {
-                                    _mapController.move(
+                                    _animatedMapMove(
                                       LatLng(place.latitude, place.longitude),
                                       15.5,
                                     );
@@ -1571,6 +1625,51 @@ class _MapPageState extends ConsumerState<MapPage> with SingleTickerProviderStat
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                Card(
+                  margin: EdgeInsets.zero,
+                  elevation: 6,
+                  shadowColor: Colors.black.withValues(alpha: 0.3),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  child: SizedBox(
+                    width: 40,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                          icon: const Icon(Icons.add, size: 20),
+                          tooltip: 'Zoom In',
+                          color: Theme.of(context).colorScheme.onPrimaryContainer,
+                          onPressed: () {
+                            final currentZoom = _mapController.camera.zoom;
+                            _animatedMapMove(_mapController.camera.center, currentZoom + 1.0);
+                          },
+                        ),
+                        Container(
+                          width: 24,
+                          height: 1,
+                          color: Theme.of(context).colorScheme.onPrimaryContainer.withValues(alpha: 0.15),
+                        ),
+                        IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                          icon: const Icon(Icons.remove, size: 20),
+                          tooltip: 'Zoom Out',
+                          color: Theme.of(context).colorScheme.onPrimaryContainer,
+                          onPressed: () {
+                            final currentZoom = _mapController.camera.zoom;
+                            _animatedMapMove(_mapController.camera.center, currentZoom - 1.0);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 FloatingActionButton(
                   heroTag: 'compassMode',
                   mini: true,
