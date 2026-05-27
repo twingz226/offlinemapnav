@@ -5,6 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart' hide DownloadableRegion;
+import 'package:hive/hive.dart';
 
 import '../../services/tile_download_service.dart';
 import '../../services/osm_graph_service.dart';
@@ -35,7 +36,8 @@ class AutoDownloadState {
   final bool hasNewTiles; // true if any tiles were actually downloaded (not skipped)
   final LatLngBounds? pendingBounds;
   final double? pendingZoom;
-  final List<PlaceBoundary>? suggestedPlaces; // New: detected admin places
+  final List<PlaceBoundary>? suggestedPlaces; // detected admin places
+  final PlaceBoundary? detectedPlace; // the specific city detected at user location
 
   const AutoDownloadState({
     this.status = AutoDownloadStatus.idle,
@@ -49,6 +51,7 @@ class AutoDownloadState {
     this.pendingBounds,
     this.pendingZoom,
     this.suggestedPlaces,
+    this.detectedPlace,
   });
 
   AutoDownloadState copyWith({
@@ -63,6 +66,7 @@ class AutoDownloadState {
     LatLngBounds? pendingBounds,
     double? pendingZoom,
     List<PlaceBoundary>? suggestedPlaces,
+    PlaceBoundary? detectedPlace,
   }) {
     return AutoDownloadState(
       status: status ?? this.status,
@@ -76,6 +80,7 @@ class AutoDownloadState {
       pendingBounds: pendingBounds ?? this.pendingBounds,
       pendingZoom: pendingZoom ?? this.pendingZoom,
       suggestedPlaces: suggestedPlaces ?? this.suggestedPlaces,
+      detectedPlace: detectedPlace ?? this.detectedPlace,
     );
   }
 
@@ -104,22 +109,90 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
   LatLngBounds? _lastDownloadedBounds;
   bool _isDownloading = false;
   String _currentInstanceId = '';
+  String? _lastCheckedPlaceId; // avoid re-prompting the same place repeatedly
+
+  /// Check if a place has already been downloaded (persisted in Hive).
+  bool _isPlaceDownloaded(String placeId) {
+    try {
+      final box = Hive.box('downloaded_places');
+      return box.containsKey(placeId);
+    } catch (e) {
+      debugPrint('Error checking downloaded places: $e');
+      return false;
+    }
+  }
+
+  /// Mark a place as downloaded in Hive persistence.
+  Future<void> _markPlaceDownloaded(PlaceBoundary place) async {
+    try {
+      final box = Hive.box('downloaded_places');
+      await box.put(place.id, {
+        'name': place.name,
+        'south': place.bounds.south,
+        'west': place.bounds.west,
+        'north': place.bounds.north,
+        'east': place.bounds.east,
+        'downloadedAt': DateTime.now().toIso8601String(),
+      });
+      debugPrint('✅ Marked place as downloaded: ${place.name} (${place.id})');
+    } catch (e) {
+      debugPrint('Error marking place as downloaded: $e');
+    }
+  }
+
+  /// Called when the user's GPS location changes. Detects the city/municipality
+  /// at the user's current location and prompts to download if not yet cached.
+  Future<void> checkCurrentLocation(double lat, double lng, {double zoom = 15}) async {
+    // Don't interrupt ongoing downloads or active prompts
+    if (_isDownloading || state.status == AutoDownloadStatus.prompting) return;
+    if (state.status == AutoDownloadStatus.downloading) return;
+
+    // Check connectivity first
+    bool isOnline = false;
+    try {
+      final results = await Connectivity().checkConnectivity();
+      isOnline = !results.contains(ConnectivityResult.none);
+    } catch (_) {}
+    if (!isOnline) return;
+
+    // Reverse-geocode the user's location to find their city
+    final place = await _boundaryService.getPlaceForLocation(lat, lng);
+    if (place == null) return;
+
+    // Skip if we already checked this place recently (avoid spam)
+    if (_lastCheckedPlaceId == place.id) return;
+    _lastCheckedPlaceId = place.id;
+
+    // Skip if already downloaded
+    if (_isPlaceDownloaded(place.id)) {
+      debugPrint('📦 ${place.name} already downloaded, skipping prompt');
+      return;
+    }
+
+    debugPrint('🏙️ User is in ${place.name} — not yet downloaded, prompting...');
+
+    // Show prompt for this specific city
+    if (mounted) {
+      state = AutoDownloadState(
+        status: AutoDownloadStatus.prompting,
+        regionLabel: place.name,
+        pendingBounds: place.bounds,
+        pendingZoom: zoom,
+        detectedPlace: place,
+        suggestedPlaces: [place],
+        dismissed: false,
+      );
+    }
+  }
 
   /// Called whenever the visible map viewport changes.
   /// Debounces the call to avoid spamming downloads on every pixel pan.
   void onMapPositionChanged(LatLngBounds visibleBounds, double zoom) {
-    if (_isDownloading || state.status == AutoDownloadStatus.prompting) return; // Don't interrupt download or active prompt
+    if (_isDownloading || state.status == AutoDownloadStatus.prompting) return;
 
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 1200), () async {
-      final places = await _boundaryService.getPlacesInBounds(visibleBounds);
-      // Update state with detected places before evaluating download
-      state = state.copyWith(
-        pendingBounds: visibleBounds,
-        pendingZoom: zoom,
-        suggestedPlaces: places,
-      );
-      _evaluateAndDownload(visibleBounds, zoom, places);
+    _debounceTimer = Timer(const Duration(milliseconds: 1500), () async {
+      await _evaluateViewport(visibleBounds, zoom);
     });
   }
 
@@ -136,17 +209,14 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
       (bounds.east + bounds.west) / 2,
     );
 
-    // Calculate rough distance between centers
     const distance = Distance();
     final dist = distance.as(LengthUnit.Kilometer, lastCenter, newCenter);
 
-    // Trigger new download if moved more than 0.5km
     return dist > 0.5;
   }
 
-  /// Evaluate whether to auto-download the current viewport.
-  Future<void> _evaluateAndDownload(LatLngBounds bounds, double zoom, List<PlaceBoundary> places) async {
-    // Skip if this area was recently downloaded
+  /// Evaluate the current viewport: detect cities inside it and prompt if needed.
+  Future<void> _evaluateViewport(LatLngBounds bounds, double zoom) async {
     if (!_isNewArea(bounds)) return;
 
     // Check connectivity
@@ -155,40 +225,37 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
       final results = await Connectivity().checkConnectivity();
       isOnline = !results.contains(ConnectivityResult.none);
     } catch (_) {}
+    if (!isOnline) return;
 
-    if (!isOnline) {
-      // We're offline — don't try to download
-      return;
+    // Detect the city at the center of the viewport
+    final centerLat = (bounds.north + bounds.south) / 2;
+    final centerLng = (bounds.east + bounds.west) / 2;
+    final place = await _boundaryService.getPlaceForLocation(centerLat, centerLng);
+
+    if (place != null && !_isPlaceDownloaded(place.id)) {
+      // Prompt for this city
+      if (mounted) {
+        state = AutoDownloadState(
+          status: AutoDownloadStatus.prompting,
+          regionLabel: place.name,
+          pendingBounds: place.bounds,
+          pendingZoom: zoom,
+          detectedPlace: place,
+          suggestedPlaces: [place],
+          dismissed: false,
+        );
+      }
     }
-
-    // Determine label: use first place name if available, otherwise fallback to coordinate label
-    String label;
-    if (places.isNotEmpty) {
-      label = places.map((p) => p.name).join(', ');
-    } else {
-      final centerLat = (bounds.north + bounds.south) / 2;
-      final centerLng = (bounds.east + bounds.west) / 2;
-      label = '${centerLat.toStringAsFixed(2)}°, ${centerLng.toStringAsFixed(2)}°';
-    }
-
-    state = AutoDownloadState(
-      status: AutoDownloadStatus.prompting,
-      regionLabel: label,
-      pendingBounds: bounds,
-      pendingZoom: zoom,
-      suggestedPlaces: places,
-      dismissed: false,
-    );
   }
 
-  /// User confirmed the download.
+  /// User confirmed the download (generic "Download" button).
   Future<void> confirmDownload() async {
-    if (state.pendingBounds == null || state.pendingZoom == null) return;
-    final bounds = state.pendingBounds!;
-    final zoom = state.pendingZoom!;
+    final place = state.detectedPlace;
+    final bounds = place?.bounds ?? state.pendingBounds;
+    final zoom = state.pendingZoom ?? 15;
 
-    // Move to idle briefly to let overlay handle animation transitions cleanly,
-    // then invoke downloadViewport.
+    if (bounds == null) return;
+
     state = state.copyWith(
       status: AutoDownloadStatus.idle,
       pendingBounds: null,
@@ -196,26 +263,31 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
       suggestedPlaces: null,
     );
 
-    await _downloadViewport(bounds, zoom);
+    await _downloadViewport(bounds, zoom, place: place);
   }
 
   /// Confirm download for a specific place.
   Future<void> confirmPlaceDownload(PlaceBoundary place) async {
-    // Reset state and start download for the selected place.
+    final zoom = state.pendingZoom ?? 15;
+
     state = state.copyWith(
       status: AutoDownloadStatus.idle,
       pendingBounds: null,
       pendingZoom: null,
       suggestedPlaces: null,
     );
-    await _downloadViewport(place.bounds, state.pendingZoom ?? 15);
+
+    await _downloadViewport(place.bounds, zoom, place: place);
   }
 
   /// User rejected the download.
   void rejectDownload() {
     if (state.pendingBounds != null) {
-      // Register this bounds as "handled" so we don't prompt again immediately
       _lastDownloadedBounds = state.pendingBounds;
+    }
+    // Mark the place so we don't prompt again this session
+    if (state.detectedPlace != null) {
+      _lastCheckedPlaceId = state.detectedPlace!.id;
     }
 
     state = const AutoDownloadState(
@@ -224,12 +296,11 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
     );
   }
 
-  /// Download tiles for the given viewport bounds.
-  Future<void> _downloadViewport(LatLngBounds bounds, double zoom) async {
+  /// Download tiles for the given bounds.
+  Future<void> _downloadViewport(LatLngBounds bounds, double zoom, {PlaceBoundary? place}) async {
     if (_isDownloading) return;
     _isDownloading = true;
 
-    // Calculate zoom range: current zoom ± 2 levels, clamped
     final int currentZoom = zoom.round();
     final int minZoom = (currentZoom - 1).clamp(1, 18);
     final int maxZoom = (currentZoom + 2).clamp(1, 18);
@@ -242,13 +313,9 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
       LatLng(bounds.north + latSpan * 0.15, bounds.east + lngSpan * 0.15),
     );
 
-    // Generate a unique instance ID for this download
-    _currentInstanceId = 'auto_${DateTime.now().millisecondsSinceEpoch}';
+    _currentInstanceId = place?.id ?? 'auto_${DateTime.now().millisecondsSinceEpoch}';
 
-    // Generate a human-readable label
-    final centerLat = (bounds.north + bounds.south) / 2;
-    final centerLng = (bounds.east + bounds.west) / 2;
-    final label = '${centerLat.toStringAsFixed(2)}°, ${centerLng.toStringAsFixed(2)}°';
+    final label = place?.name ?? '${((bounds.north + bounds.south) / 2).toStringAsFixed(2)}°, ${((bounds.east + bounds.west) / 2).toStringAsFixed(2)}°';
 
     state = AutoDownloadState(
       status: AutoDownloadStatus.downloading,
@@ -256,6 +323,7 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
       regionLabel: label,
       dismissed: false,
       hasNewTiles: false,
+      detectedPlace: place,
     );
 
     bool hasNewTiles = false;
@@ -289,13 +357,18 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
 
       _lastDownloadedBounds = expandedBounds;
 
+      // Mark this place as downloaded in persistence
+      if (place != null) {
+        await _markPlaceDownloaded(place);
+      }
+
       // Compile OSM road graph for this viewport so offline routing can use it
       if (hasNewTiles) {
         try {
-          debugPrint('AutoDownload: Compiling OSM road graph for viewport: $label');
+          debugPrint('AutoDownload: Compiling OSM road graph for: $label');
           final graphRegion = DownloadableRegion(
             id: _currentInstanceId,
-            name: 'Auto: $label',
+            name: place != null ? place.name : 'Auto: $label',
             bounds: expandedBounds,
             minZoom: minZoom,
             maxZoom: maxZoom,
@@ -317,9 +390,9 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
             lastCompletedAt: DateTime.now(),
             dismissed: false,
             hasNewTiles: true,
+            detectedPlace: place,
           );
 
-          // Auto-dismiss the completed notification after 4 seconds
           _completedDismissTimer?.cancel();
           _completedDismissTimer = Timer(const Duration(seconds: 4), () {
             if (mounted && state.status == AutoDownloadStatus.completed) {
@@ -330,8 +403,6 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
             }
           });
         } else {
-          // No new tiles downloaded, everything was already stored offline.
-          // Silently complete and reset to idle.
           state = const AutoDownloadState(
             status: AutoDownloadStatus.idle,
             dismissed: true,
@@ -351,7 +422,6 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
           hasNewTiles: hasNewTiles,
         );
 
-        // Auto-dismiss error after 5 seconds
         _completedDismissTimer?.cancel();
         _completedDismissTimer = Timer(const Duration(seconds: 5), () {
           if (mounted && state.status == AutoDownloadStatus.error) {

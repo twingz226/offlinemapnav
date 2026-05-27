@@ -257,12 +257,20 @@ class _MapPageState extends ConsumerState<MapPage> with TickerProviderStateMixin
       final lastPos = await ref.read(locationProvider.notifier).getLastKnownLocation();
       if (lastPos != null && mounted) {
         _animatedMapMove(LatLng(lastPos.latitude, lastPos.longitude), 15.0);
+        // Check if this city needs downloading
+        ref.read(autoDownloadProvider.notifier).checkCurrentLocation(
+          lastPos.latitude, lastPos.longitude, zoom: 15.0,
+        );
         return;
       }
       // 2. Fetch fresh high-accuracy position in the background
       final freshPos = await ref.read(locationProvider.notifier).getCurrentLocation();
       if (freshPos != null && mounted) {
         _animatedMapMove(LatLng(freshPos.latitude, freshPos.longitude), 15.0);
+        // Check if this city needs downloading
+        ref.read(autoDownloadProvider.notifier).checkCurrentLocation(
+          freshPos.latitude, freshPos.longitude, zoom: 15.0,
+        );
       }
     } catch (e) {
       debugPrint('Failed to auto-center on startup: $e');

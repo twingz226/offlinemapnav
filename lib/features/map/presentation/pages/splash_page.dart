@@ -77,6 +77,7 @@ class _SplashPageState extends ConsumerState<SplashPage> with TickerProviderStat
       await Hive.openBox('routesCache');
       await Hive.openBox('routesHistory');
       await Hive.openBox('osm_graphs');
+      await Hive.openBox('downloaded_places');
       
       await Future.delayed(const Duration(milliseconds: 200));
 

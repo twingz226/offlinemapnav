@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/auto_download_provider.dart';
-import '../../data/models/place_boundary.dart';
 
 /// A modern, animated overlay that shows the auto-download status.
 /// Appears as a floating toast/pill at the bottom of the map.
@@ -97,24 +96,26 @@ class _AutoDownloadOverlayState extends ConsumerState<AutoDownloadOverlay>
     if (isPrompting) {
       bgColor = const Color(0xFF1E1E38);
       accentColor = const Color(0xFFFFB74D);
-      icon = Icons.cloud_download_outlined;
-      title = 'Download offline map?';
-      subtitle = dlState.regionLabel != null
-          ? 'Save area around ${dlState.regionLabel} offline.'
-          : 'Save this area for offline use.';
+      icon = Icons.location_city_outlined;
+      // Show city name prominently
+      final placeName = dlState.detectedPlace?.name ?? dlState.regionLabel ?? 'this area';
+      title = 'Download $placeName?';
+      subtitle = 'Save offline map data for this city.';
     } else if (isDownloading) {
       bgColor = const Color(0xFF1A1A2E);
       accentColor = const Color(0xFF4FC3F7);
       icon = Icons.cloud_download_outlined;
-      title = 'Saving map for offline';
+      final placeName = dlState.detectedPlace?.name ?? dlState.regionLabel;
+      title = 'Downloading ${placeName ?? 'map'}…';
       subtitle = dlState.regionLabel != null
-          ? 'Area: ${dlState.regionLabel}'
+          ? 'Saving offline data'
           : 'Downloading tiles…';
     } else if (isCompleted) {
       bgColor = const Color(0xFF1B2E1B);
       accentColor = const Color(0xFF66BB6A);
       icon = Icons.cloud_done_outlined;
-      title = 'Area saved for offline use';
+      final placeName = dlState.detectedPlace?.name;
+      title = placeName != null ? '$placeName saved!' : 'Area saved for offline use';
       subtitle = '${dlState.tilesDownloaded} tiles cached';
     } else if (isError) {
       bgColor = const Color(0xFF2E1A1A);
@@ -266,7 +267,7 @@ class _AutoDownloadOverlayState extends ConsumerState<AutoDownloadOverlay>
                 if (isPrompting) ...[
                   const Divider(color: Colors.white10, height: 1),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
@@ -287,7 +288,7 @@ class _AutoDownloadOverlayState extends ConsumerState<AutoDownloadOverlay>
                           ),
                         ),
                         const SizedBox(width: 8),
-                        ElevatedButton(
+                        ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(
                             backgroundColor: accentColor,
                             foregroundColor: Colors.black87,
@@ -297,10 +298,11 @@ class _AutoDownloadOverlayState extends ConsumerState<AutoDownloadOverlay>
                             ),
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                           ),
+                          icon: const Icon(Icons.download_rounded, size: 18),
                           onPressed: () {
                             ref.read(autoDownloadProvider.notifier).confirmDownload();
                           },
-                          child: const Text(
+                          label: const Text(
                             'Download',
                             style: TextStyle(
                               fontSize: 13,
@@ -311,34 +313,6 @@ class _AutoDownloadOverlayState extends ConsumerState<AutoDownloadOverlay>
                       ],
                     ),
                   ),
-                  // Suggested places list
-                  if (dlState.suggestedPlaces != null && dlState.suggestedPlaces!.isNotEmpty) ...[
-                    const Divider(color: Colors.white10, height: 1),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: dlState.suggestedPlaces!.map((place) => Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                place.name,
-                                style: const TextStyle(color: Colors.white, fontSize: 13),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: () {
-                                ref.read(autoDownloadProvider.notifier).confirmPlaceDownload(place);
-                              },
-                              child: const Text('Download'),
-                            ),
-                          ],
-                        )).toList(),
-                      ),
-                    ),
-                  ],
                 ],
               ],
             ),

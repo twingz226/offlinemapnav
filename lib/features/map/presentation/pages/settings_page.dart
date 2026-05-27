@@ -6,11 +6,32 @@ import '../providers/cache_provider.dart';
 import 'trip_history_page.dart';
 import 'navigation_routes_page.dart';
 
-class SettingsPage extends ConsumerWidget {
+class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends ConsumerState<SettingsPage> {
+  @override
+  void initState() {
+    super.initState();
+    // Start periodic cache stats refresh while this page is visible
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(cacheProvider.notifier).startPeriodicRefresh();
+    });
+  }
+
+  @override
+  void dispose() {
+    // Stop periodic refresh when leaving the page
+    ref.read(cacheProvider.notifier).stopPeriodicRefresh();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final themeMode = ref.watch(themeProvider);
     final cacheState = ref.watch(cacheProvider);
 

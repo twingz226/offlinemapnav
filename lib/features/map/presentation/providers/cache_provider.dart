@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../services/tile_cache_service.dart';
 
@@ -17,7 +18,11 @@ class CacheState {
       return '${sizeInKiB.toStringAsFixed(1)} KiB';
     }
     final sizeInMiB = sizeInKiB / 1024;
-    return '${sizeInMiB.toStringAsFixed(1)} MiB';
+    if (sizeInMiB < 1024) {
+      return '${sizeInMiB.toStringAsFixed(1)} MiB';
+    }
+    final sizeInGiB = sizeInMiB / 1024;
+    return '${sizeInGiB.toStringAsFixed(2)} GiB';
   }
 }
 
@@ -27,6 +32,7 @@ class CacheNotifier extends StateNotifier<CacheState> {
   }
 
   final _service = TileCacheService();
+  Timer? _refreshTimer;
 
   Future<void> loadStats() async {
     state = CacheState(
@@ -52,6 +58,25 @@ class CacheNotifier extends StateNotifier<CacheState> {
     }
   }
 
+  /// Public method to refresh stats on demand (e.g. after a download finishes).
+  Future<void> refresh() async {
+    await loadStats();
+  }
+
+  /// Start periodic refresh (e.g. while Settings page is visible).
+  void startPeriodicRefresh({Duration interval = const Duration(seconds: 5)}) {
+    _refreshTimer?.cancel();
+    _refreshTimer = Timer.periodic(interval, (_) => loadStats());
+    // Also refresh immediately
+    loadStats();
+  }
+
+  /// Stop periodic refresh (e.g. when leaving Settings page).
+  void stopPeriodicRefresh() {
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
+  }
+
   Future<void> clearCache() async {
     state = CacheState(
       tileCount: state.tileCount,
@@ -63,8 +88,15 @@ class CacheNotifier extends StateNotifier<CacheState> {
     } catch (_) {}
     await loadStats();
   }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
 }
 
 final cacheProvider = StateNotifierProvider<CacheNotifier, CacheState>((ref) {
   return CacheNotifier();
 });
+
