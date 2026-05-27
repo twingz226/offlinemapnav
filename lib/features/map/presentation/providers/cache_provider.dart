@@ -33,8 +33,12 @@ class CacheNotifier extends StateNotifier<CacheState> {
 
   final _service = TileCacheService();
   Timer? _refreshTimer;
+  bool _isPeriodicActive = false;
 
-  Future<void> loadStats() async {
+  Future<void> loadStats({bool isPeriodic = false}) async {
+    if (isPeriodic && !_isPeriodicActive) return;
+    if (!hasListeners) return;
+
     state = CacheState(
       tileCount: state.tileCount,
       sizeInKiB: state.sizeInKiB,
@@ -44,12 +48,19 @@ class CacheNotifier extends StateNotifier<CacheState> {
       final storeStats = _service.store.stats;
       final count = await storeStats.length;
       final size = await storeStats.size;
+
+      if (isPeriodic && !_isPeriodicActive) return;
+      if (!hasListeners) return;
+
       state = CacheState(
         tileCount: count,
         sizeInKiB: size,
         isLoading: false,
       );
     } catch (e) {
+      if (isPeriodic && !_isPeriodicActive) return;
+      if (!hasListeners) return;
+
       state = CacheState(
         tileCount: 0,
         sizeInKiB: 0.0,
@@ -65,14 +76,16 @@ class CacheNotifier extends StateNotifier<CacheState> {
 
   /// Start periodic refresh (e.g. while Settings page is visible).
   void startPeriodicRefresh({Duration interval = const Duration(seconds: 5)}) {
+    _isPeriodicActive = true;
     _refreshTimer?.cancel();
-    _refreshTimer = Timer.periodic(interval, (_) => loadStats());
+    _refreshTimer = Timer.periodic(interval, (_) => loadStats(isPeriodic: true));
     // Also refresh immediately
-    loadStats();
+    loadStats(isPeriodic: true);
   }
 
   /// Stop periodic refresh (e.g. when leaving Settings page).
   void stopPeriodicRefresh() {
+    _isPeriodicActive = false;
     _refreshTimer?.cancel();
     _refreshTimer = null;
   }

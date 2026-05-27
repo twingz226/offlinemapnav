@@ -12,6 +12,7 @@ class RouteHistoryItem {
   final double duration; // in seconds
   final double averageSpeedKmh; // in km/h
   final DateTime createdAt;
+  final List<String> viaStreets;
 
   RouteHistoryItem({
     required this.id,
@@ -25,6 +26,7 @@ class RouteHistoryItem {
     required this.duration,
     required this.averageSpeedKmh,
     required this.createdAt,
+    this.viaStreets = const [],
   });
 
   Map<String, dynamic> toJson() => {
@@ -39,6 +41,7 @@ class RouteHistoryItem {
         'duration': duration,
         'averageSpeedKmh': averageSpeedKmh,
         'createdAt': createdAt.toIso8601String(),
+        'viaStreets': viaStreets,
       };
 
   factory RouteHistoryItem.fromJson(Map<dynamic, dynamic> json) {
@@ -58,6 +61,7 @@ class RouteHistoryItem {
       duration: dur,
       averageSpeedKmh: avgSpeed,
       createdAt: DateTime.parse(json['createdAt'] as String),
+      viaStreets: (json['viaStreets'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? const [],
     );
   }
 }
@@ -74,6 +78,7 @@ class RouteHistoryService {
     required double endLng,
     required double distance,
     required double duration,
+    List<String> viaStreets = const [],
   }) async {
     try {
       final box = Hive.box(_boxName);
@@ -92,6 +97,7 @@ class RouteHistoryService {
         duration: duration,
         averageSpeedKmh: averageSpeedKmh,
         createdAt: DateTime.now(),
+        viaStreets: viaStreets,
       );
 
       await box.put(id, item.toJson());

@@ -25,6 +25,7 @@ class RouteHistoryNotifier extends StateNotifier<List<RouteHistoryItem>> {
     required double endLng,
     required double distance,
     required double duration,
+    List<String> viaStreets = const [],
   }) async {
     // Check for duplicates in the last 2 minutes
     final now = DateTime.now();
@@ -48,6 +49,7 @@ class RouteHistoryNotifier extends StateNotifier<List<RouteHistoryItem>> {
       endLng: endLng,
       distance: distance,
       duration: duration,
+      viaStreets: viaStreets,
     );
     loadHistory();
   }

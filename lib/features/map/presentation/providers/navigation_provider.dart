@@ -3,9 +3,11 @@ import 'package:latlong2/latlong.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:offline_map/core/utils/navigation_utils.dart';
+import 'package:hive/hive.dart';
 import '../../services/routing_service.dart';
 import '../../services/voice_navigation_service.dart';
 import '../../services/distance_service.dart';
+import '../../services/administrative_boundary_service.dart';
 import 'location_provider.dart';
 import 'route_history_provider.dart';
 
@@ -101,6 +103,7 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
   final Ref ref;
   final _routingService = RoutingService();
   final _voiceService = VoiceNavigationService();
+  final _boundaryService = AdministrativeBoundaryService();
   
   int _lastSpokenStepIndex = -1;
   double _lastSpokenDistance = double.infinity;
@@ -148,15 +151,19 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
           isRerouting: false,
         );
 
+        final resolvedStartName = await _resolvePlaceName(start, 'Current Location', isOnline);
+        final resolvedEndName = await _resolvePlaceName(end, destinationName, isOnline);
+
         ref.read(routeHistoryProvider.notifier).addRouteHistory(
-          startName: 'Current Location',
-          endName: destinationName,
+          startName: resolvedStartName,
+          endName: resolvedEndName,
           startLat: start.latitude,
           startLng: start.longitude,
           endLat: end.latitude,
           endLng: end.longitude,
           distance: primaryRoute.distance,
           duration: primaryRoute.duration,
+          viaStreets: _extractViaStreets(primaryRoute),
         );
 
         _lastSpokenStepIndex = -1;
@@ -213,15 +220,19 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
           isRerouting: false,
         );
 
+        final resolvedStartName = await _resolvePlaceName(start, 'Current Location', isOnline);
+        final resolvedEndName = await _resolvePlaceName(end, destinationName, isOnline);
+
         ref.read(routeHistoryProvider.notifier).addRouteHistory(
-          startName: 'Current Location',
-          endName: destinationName,
+          startName: resolvedStartName,
+          endName: resolvedEndName,
           startLat: start.latitude,
           startLng: start.longitude,
           endLat: end.latitude,
           endLng: end.longitude,
           distance: primaryRoute.distance,
           duration: primaryRoute.duration,
+          viaStreets: _extractViaStreets(primaryRoute),
         );
       } else {
         state = state.copyWith(isRerouting: false);
@@ -468,6 +479,105 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
       }
     }
     return minDistance;
+  }
+
+  String _getOfflinePlaceName(LatLng point) {
+    try {
+      final box = Hive.box('downloaded_places');
+      String? bestName;
+      double minDistance = double.infinity;
+
+      for (final key in box.keys) {
+        final val = box.get(key);
+        if (val is Map) {
+          final name = val['name'] as String?;
+          final south = val['south'] as double?;
+          final west = val['west'] as double?;
+          final north = val['north'] as double?;
+          final east = val['east'] as double?;
+          if (name != null && south != null && west != null && north != null && east != null) {
+            if (point.latitude >= south &&
+                point.latitude <= north &&
+                point.longitude >= west &&
+                point.longitude <= east) {
+              final centerLat = (south + north) / 2;
+              final centerLng = (west + east) / 2;
+              final dist = DistanceService.calculateDistance(
+                point,
+                LatLng(centerLat, centerLng),
+              );
+              if (dist < minDistance) {
+                minDistance = dist;
+                bestName = name;
+              }
+            }
+          }
+        }
+      }
+      if (bestName != null) {
+        return bestName;
+      }
+    } catch (_) {}
+    return 'Current Location';
+  }
+
+  Future<String> _resolvePlaceName(LatLng point, String fallback, bool isOnline) async {
+    // If the fallback is already a valid specific place name, use it directly!
+    if (fallback.isNotEmpty && 
+        fallback != 'Current Location' && 
+        fallback != 'Pinned Location' && 
+        fallback != 'Destination') {
+      return fallback;
+    }
+
+    // 1. Try to resolve using offline downloaded places bounds
+    String offlineName = _getOfflinePlaceName(point);
+    if (offlineName != 'Current Location') {
+      return offlineName;
+    }
+
+    // 2. If online and not found offline, try reverse-geocoding
+    if (isOnline) {
+      try {
+        final place = await _boundaryService.getPlaceForLocation(point.latitude, point.longitude);
+        if (place != null && place.name.isNotEmpty) {
+          return place.name;
+        }
+      } catch (_) {}
+    }
+
+    // 3. Clean up generic fallbacks or return fallback
+    if (fallback == 'Current Location' || fallback == 'Pinned Location' || fallback.isEmpty) {
+      return 'Location (${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)})';
+    }
+    return fallback;
+  }
+
+  List<String> _extractViaStreets(RouteInfo route) {
+    final Set<String> streets = {};
+    final patterns = [
+      RegExp(r'on\s+(.+)$', caseSensitive: false),
+      RegExp(r'onto\s+(.+)$', caseSensitive: false),
+      RegExp(r'toward\s+(.+)$', caseSensitive: false),
+    ];
+
+    for (final step in route.steps) {
+      final instruction = step.instruction;
+      for (final pattern in patterns) {
+        final match = pattern.firstMatch(instruction);
+        if (match != null) {
+          final street = match.group(1)!.trim();
+          if (street.isNotEmpty &&
+              street.toLowerCase() != 'starting point' &&
+              street.toLowerCase() != 'destination' &&
+              street.toLowerCase() != 'unnamed road') {
+            final cleaned = street.replaceAll(RegExp(r'[.,]$'), '');
+            streets.add(cleaned);
+          }
+        }
+      }
+    }
+    return streets.toList();
   }
 }
 
