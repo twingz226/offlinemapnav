@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/auto_download_provider.dart';
+import '../../data/models/place_boundary.dart';
 
 /// A modern, animated overlay that shows the auto-download status.
 /// Appears as a floating toast/pill at the bottom of the map.
@@ -310,6 +311,34 @@ class _AutoDownloadOverlayState extends ConsumerState<AutoDownloadOverlay>
                       ],
                     ),
                   ),
+                  // Suggested places list
+                  if (dlState.suggestedPlaces != null && dlState.suggestedPlaces!.isNotEmpty) ...[
+                    const Divider(color: Colors.white10, height: 1),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: dlState.suggestedPlaces!.map((place) => Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                place.name,
+                                style: const TextStyle(color: Colors.white, fontSize: 13),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                ref.read(autoDownloadProvider.notifier).confirmPlaceDownload(place);
+                              },
+                              child: const Text('Download'),
+                            ),
+                          ],
+                        )).toList(),
+                      ),
+                    ),
+                  ],
                 ],
               ],
             ),

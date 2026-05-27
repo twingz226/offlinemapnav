@@ -8,7 +8,9 @@ import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart' hide Dow
 
 import '../../services/tile_download_service.dart';
 import '../../services/osm_graph_service.dart';
+import '../../services/administrative_boundary_service.dart';
 import 'download_provider.dart';
+import '../../data/models/place_boundary.dart';
 
 /// Status of the auto-download process.
 enum AutoDownloadStatus {
@@ -33,6 +35,7 @@ class AutoDownloadState {
   final bool hasNewTiles; // true if any tiles were actually downloaded (not skipped)
   final LatLngBounds? pendingBounds;
   final double? pendingZoom;
+  final List<PlaceBoundary>? suggestedPlaces; // New: detected admin places
 
   const AutoDownloadState({
     this.status = AutoDownloadStatus.idle,
@@ -45,6 +48,7 @@ class AutoDownloadState {
     this.hasNewTiles = false,
     this.pendingBounds,
     this.pendingZoom,
+    this.suggestedPlaces,
   });
 
   AutoDownloadState copyWith({
@@ -58,6 +62,7 @@ class AutoDownloadState {
     bool? hasNewTiles,
     LatLngBounds? pendingBounds,
     double? pendingZoom,
+    List<PlaceBoundary>? suggestedPlaces,
   }) {
     return AutoDownloadState(
       status: status ?? this.status,
@@ -70,6 +75,7 @@ class AutoDownloadState {
       hasNewTiles: hasNewTiles ?? this.hasNewTiles,
       pendingBounds: pendingBounds ?? this.pendingBounds,
       pendingZoom: pendingZoom ?? this.pendingZoom,
+      suggestedPlaces: suggestedPlaces ?? this.suggestedPlaces,
     );
   }
 
@@ -92,6 +98,7 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
 
   final _service = TileDownloadService();
   final _graphService = OSMGraphService();
+  final _boundaryService = AdministrativeBoundaryService();
   Timer? _debounceTimer;
   Timer? _completedDismissTimer;
   LatLngBounds? _lastDownloadedBounds;
@@ -104,8 +111,15 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
     if (_isDownloading || state.status == AutoDownloadStatus.prompting) return; // Don't interrupt download or active prompt
 
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 1200), () {
-      _evaluateAndDownload(visibleBounds, zoom);
+    _debounceTimer = Timer(const Duration(milliseconds: 1200), () async {
+      final places = await _boundaryService.getPlacesInBounds(visibleBounds);
+      // Update state with detected places before evaluating download
+      state = state.copyWith(
+        pendingBounds: visibleBounds,
+        pendingZoom: zoom,
+        suggestedPlaces: places,
+      );
+      _evaluateAndDownload(visibleBounds, zoom, places);
     });
   }
 
@@ -131,7 +145,7 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
   }
 
   /// Evaluate whether to auto-download the current viewport.
-  Future<void> _evaluateAndDownload(LatLngBounds bounds, double zoom) async {
+  Future<void> _evaluateAndDownload(LatLngBounds bounds, double zoom, List<PlaceBoundary> places) async {
     // Skip if this area was recently downloaded
     if (!_isNewArea(bounds)) return;
 
@@ -147,16 +161,22 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
       return;
     }
 
-    // Instead of downloading directly, show the confirmation prompt overlay
-    final centerLat = (bounds.north + bounds.south) / 2;
-    final centerLng = (bounds.east + bounds.west) / 2;
-    final label = '${centerLat.toStringAsFixed(2)}°, ${centerLng.toStringAsFixed(2)}°';
+    // Determine label: use first place name if available, otherwise fallback to coordinate label
+    String label;
+    if (places.isNotEmpty) {
+      label = places.map((p) => p.name).join(', ');
+    } else {
+      final centerLat = (bounds.north + bounds.south) / 2;
+      final centerLng = (bounds.east + bounds.west) / 2;
+      label = '${centerLat.toStringAsFixed(2)}°, ${centerLng.toStringAsFixed(2)}°';
+    }
 
     state = AutoDownloadState(
       status: AutoDownloadStatus.prompting,
       regionLabel: label,
       pendingBounds: bounds,
       pendingZoom: zoom,
+      suggestedPlaces: places,
       dismissed: false,
     );
   }
@@ -173,9 +193,22 @@ class AutoDownloadNotifier extends StateNotifier<AutoDownloadState> {
       status: AutoDownloadStatus.idle,
       pendingBounds: null,
       pendingZoom: null,
+      suggestedPlaces: null,
     );
 
     await _downloadViewport(bounds, zoom);
+  }
+
+  /// Confirm download for a specific place.
+  Future<void> confirmPlaceDownload(PlaceBoundary place) async {
+    // Reset state and start download for the selected place.
+    state = state.copyWith(
+      status: AutoDownloadStatus.idle,
+      pendingBounds: null,
+      pendingZoom: null,
+      suggestedPlaces: null,
+    );
+    await _downloadViewport(place.bounds, state.pendingZoom ?? 15);
   }
 
   /// User rejected the download.
