@@ -119,7 +119,7 @@ class _UserLocationIndicatorState extends State<UserLocationIndicator>
 
             // 2. Smoothly animated direction indicator
             TweenAnimationBuilder<double>(
-              tween: Tween<double>(begin: radians, end: radians),
+              tween: Tween<double>(end: radians),
               duration: const Duration(milliseconds: 200),
               curve: Curves.easeOutCubic,
               builder: (context, animatedRadians, child) {
